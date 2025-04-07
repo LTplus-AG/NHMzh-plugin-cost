@@ -162,12 +162,8 @@ const MainPage = () => {
     try {
       let apiBaseUrl = "";
 
-      let wsUrl = "ws://localhost:8001";
-      if ((window as { VITE_WEBSOCKET_URL?: string }).VITE_WEBSOCKET_URL) {
-        wsUrl = (window as { VITE_WEBSOCKET_URL?: string }).VITE_WEBSOCKET_URL!;
-      } else if (import.meta.env.VITE_WEBSOCKET_URL) {
-        wsUrl = import.meta.env.VITE_WEBSOCKET_URL;
-      }
+      // Use environment variable for WebSocket URL, provide a default if not set
+      const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
 
       const wsProtocol = wsUrl.startsWith("wss:") ? "https:" : "http:";
       const httpUrl = wsUrl.replace(/^ws(s)?:\/\//, "");
@@ -284,14 +280,11 @@ const MainPage = () => {
     try {
       const encodedProjectName = encodeURIComponent(projectName);
 
-      let wsUrl = "ws://localhost:8001";
+      // Use environment variable for WebSocket URL, provide a default if not set
+      const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
       let apiBaseUrl = "";
       let backendAvailable = false;
       try {
-        if (import.meta.env && import.meta.env.VITE_WEBSOCKET_URL) {
-          wsUrl = import.meta.env.VITE_WEBSOCKET_URL;
-        }
-
         const wsProtocol = wsUrl.startsWith("wss:") ? "https:" : "http:";
         const httpUrl = wsUrl.replace(/^ws(s)?:\/\//, "");
         apiBaseUrl = `${wsProtocol}//${httpUrl}`;

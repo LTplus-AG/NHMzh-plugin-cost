@@ -216,141 +216,141 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
       return;
     }
 
-    // URL for WebSocket connection
-    let wsUrl = "ws://localhost:8001";
-    try {
-      if (import.meta.env && import.meta.env.VITE_WEBSOCKET_URL) {
-        wsUrl = import.meta.env.VITE_WEBSOCKET_URL;
+    // Function to establish WebSocket connection
+    const connectWebSocket = () => {
+      // Use environment variable for WebSocket URL, provide a default if not set
+      const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
+
+      console.log("Connecting to WebSocket at:", wsUrl);
+
+      // Extract the HTTP URL from WebSocket URL for REST API calls
+      try {
+        const wsProtocol = wsUrl.startsWith("wss:") ? "https:" : "http:";
+        const httpUrl = wsUrl.replace(/^ws(s)?:\/\//, "");
+        const apiBaseUrl = `${wsProtocol}//${httpUrl}`;
+        setBackendUrl(apiBaseUrl);
+      } catch (error) {
+        console.error("Error setting backend URL:", error);
+        setBackendUrl("");
       }
-    } catch (error) {
-      console.error("Error accessing environment variables:", error);
-    }
 
-    // Extract the HTTP URL from WebSocket URL for REST API calls
-    try {
-      const wsProtocol = wsUrl.startsWith("wss:") ? "https:" : "http:";
-      const httpUrl = wsUrl.replace(/^ws(s)?:\/\//, "");
-      const apiBaseUrl = `${wsProtocol}//${httpUrl}`;
-      setBackendUrl(apiBaseUrl);
-    } catch (error) {
-      console.error("Error setting backend URL:", error);
-      setBackendUrl("");
-    }
+      let ws: WebSocket | null = null;
 
-    let ws: WebSocket | null = null;
-
-    try {
-      // Set up connection timeout
-      const timeoutId = setTimeout(() => {
-        if (ws && ws.readyState !== WebSocket.OPEN) {
-          if (ws) ws.close();
-          setConnectionStatus("DISCONNECTED");
-        }
-      }, 5000);
-
-      // Initialize WebSocket
-      ws = new WebSocket(wsUrl);
-      setWebsocket(ws);
-
-      ws.onopen = () => {
-        clearTimeout(timeoutId);
-        setConnectionStatus("CONNECTED");
-        requestAvailableEbkpCodes(ws);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as Record<string, unknown>;
-
-          // Handle receiving eBKP codes list from server
-          if (
-            data.type === "available_ebkp_codes" &&
-            Array.isArray(data.codes)
-          ) {
-            // Transform the codes into our EbkpCodeInfo format
-            const codeObjects: EbkpCodeInfo[] = data.codes.map(
-              (code: string) => ({
-                code,
-                type: code.split(".")[0], // Extract main type like C1, C2, etc.
-              })
-            );
-
-            setAvailableEbkpCodes(codeObjects);
-            return;
+      try {
+        // Set up connection timeout
+        const timeoutId = setTimeout(() => {
+          if (ws && ws.readyState !== WebSocket.OPEN) {
+            if (ws) ws.close();
+            setConnectionStatus("DISCONNECTED");
           }
+        }, 5000);
 
-          // Check if this message has a messageId that has a registered handler
-          if (
-            typeof data.messageId === "string" &&
-            messageHandlers[data.messageId]
-          ) {
-            // Call the registered handler for this message ID
-            messageHandlers[data.messageId](data);
-            // Clean up the handler after use
-            delete messageHandlers[data.messageId];
-            return;
-          }
+        // Initialize WebSocket
+        ws = new WebSocket(wsUrl);
+        setWebsocket(ws);
 
-          // Skip connection status messages
-          if (data.type === "connection") {
-            // Update connection status if included in the message
-            if (typeof data.kafka === "string") {
-              setConnectionStatus(data.kafka);
+        ws.onopen = () => {
+          clearTimeout(timeoutId);
+          setConnectionStatus("CONNECTED");
+          requestAvailableEbkpCodes(ws);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data) as Record<string, unknown>;
+
+            // Handle receiving eBKP codes list from server
+            if (
+              data.type === "available_ebkp_codes" &&
+              Array.isArray(data.codes)
+            ) {
+              // Transform the codes into our EbkpCodeInfo format
+              const codeObjects: EbkpCodeInfo[] = data.codes.map(
+                (code: string) => ({
+                  code,
+                  type: code.split(".")[0], // Extract main type like C1, C2, etc.
+                })
+              );
+
+              setAvailableEbkpCodes(codeObjects);
+              return;
             }
-            return;
+
+            // Check if this message has a messageId that has a registered handler
+            if (
+              typeof data.messageId === "string" &&
+              messageHandlers[data.messageId]
+            ) {
+              // Call the registered handler for this message ID
+              messageHandlers[data.messageId](data);
+              // Clean up the handler after use
+              delete messageHandlers[data.messageId];
+              return;
+            }
+
+            // Skip connection status messages
+            if (data.type === "connection") {
+              // Update connection status if included in the message
+              if (typeof data.kafka === "string") {
+                setConnectionStatus(data.kafka);
+              }
+              return;
+            }
+
+            // Handle project update notifications
+            if (
+              data.type === "project_update" &&
+              typeof data.projectName === "string" &&
+              typeof data.projectId === "string" &&
+              typeof data.totalElements === "number" &&
+              typeof data.timestamp === "string"
+            ) {
+              // Store project update information
+              setProjectUpdates((prev) => ({
+                ...prev,
+                [data.projectName as string]: {
+                  projectId: data.projectId as string,
+                  projectName: data.projectName as string,
+                  elementCount: data.totalElements as number,
+                  totalCost:
+                    typeof data.totalCost === "number"
+                      ? data.totalCost
+                      : undefined,
+                  timestamp: data.timestamp as string,
+                },
+              }));
+
+              return;
+            }
+          } catch (err) {
+            console.error("Error parsing WebSocket message:", err);
           }
+        };
 
-          // Handle project update notifications
-          if (
-            data.type === "project_update" &&
-            typeof data.projectName === "string" &&
-            typeof data.projectId === "string" &&
-            typeof data.totalElements === "number" &&
-            typeof data.timestamp === "string"
-          ) {
-            // Store project update information
-            setProjectUpdates((prev) => ({
-              ...prev,
-              [data.projectName as string]: {
-                projectId: data.projectId as string,
-                projectName: data.projectName as string,
-                elementCount: data.totalElements as number,
-                totalCost:
-                  typeof data.totalCost === "number"
-                    ? data.totalCost
-                    : undefined,
-                timestamp: data.timestamp as string,
-              },
-            }));
+        ws.onerror = (event) => {
+          console.error("WebSocket error in KafkaContext:", event);
+          setConnectionStatus("DISCONNECTED");
+        };
 
-            return;
+        ws.onclose = () => {
+          setConnectionStatus("DISCONNECTED");
+        };
+
+        // Clean up on unmount
+        return () => {
+          clearTimeout(timeoutId);
+          if (ws) {
+            ws.close();
           }
-        } catch (err) {
-          console.error("Error parsing WebSocket message:", err);
-        }
-      };
-
-      ws.onerror = (event) => {
-        console.error("WebSocket error in KafkaContext:", event);
+        };
+      } catch (error) {
+        console.error("Failed to initialize WebSocket in KafkaContext:", error);
         setConnectionStatus("DISCONNECTED");
-      };
+        return () => {}; // Empty cleanup function
+      }
+    };
 
-      ws.onclose = () => {
-        setConnectionStatus("DISCONNECTED");
-      };
-
-      // Clean up on unmount
-      return () => {
-        clearTimeout(timeoutId);
-        if (ws) {
-          ws.close();
-        }
-      };
-    } catch (error) {
-      console.error("Failed to initialize WebSocket in KafkaContext:", error);
-      setConnectionStatus("DISCONNECTED");
-      return () => {}; // Empty cleanup function
-    }
+    connectWebSocket();
   }, [messageHandlers]); // Add messageHandlers as a dependency
 
   // Send cost update to Kafka via WebSocket server

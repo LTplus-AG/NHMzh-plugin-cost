@@ -154,14 +154,10 @@ const CostUploader = ({
         console.warn("WebSocket not connected, trying to reconnect");
         // Try to reconnect
         try {
-          // Get the WebSocket URL from environment or use default
-          let wsUrl = "ws://localhost:8001";
-          if ((window as { VITE_WEBSOCKET_URL?: string }).VITE_WEBSOCKET_URL) {
-            wsUrl = (window as { VITE_WEBSOCKET_URL?: string })
-              .VITE_WEBSOCKET_URL!;
-          } else if (import.meta.env.VITE_WEBSOCKET_URL) {
-            wsUrl = import.meta.env.VITE_WEBSOCKET_URL;
-          }
+          // Use environment variable for WebSocket URL, provide a default if not set
+          const wsUrl =
+            import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
+
           ws = new WebSocket(wsUrl);
           (window as { ws?: WebSocket }).ws = ws;
           // Wait for connection
