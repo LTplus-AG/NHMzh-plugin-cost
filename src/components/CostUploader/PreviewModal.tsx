@@ -513,7 +513,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
     const enhancedData: EnhancedCostItem[] = potentialMatches
       .filter((match) => match.costUnit > 0) // Skip items with zero cost
       .map((match) => {
-        const costItem = match.excelItem || {};
+        const costItem = match.excelItem || { bezeichnung: "", category: "" };
         const area = match.elementCount; // Use element count as area measurement
         const costUnit = match.costUnit || 0; // Unit cost
         const totalCost = area * costUnit; // Total cost calculated from area and unit cost
@@ -527,7 +527,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
           ebkph2: match.code.match(/^[A-Z]\d+\.(\d+)/)?.[1] || "",
           ebkph3: "",
           // QTO element properties
-          category: costItem.bezeichnung || costItem.category || "",
+          category: String(costItem.bezeichnung || costItem.category || ""),
           level: String(costItem.level || ""),
           is_structural: true,
           fire_rating: "",
@@ -548,9 +548,9 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
           menge: area,
           totalChf: totalCost,
           kennwert: costUnit,
-          bezeichnung: costItem.bezeichnung || "",
+          bezeichnung: String(costItem.bezeichnung || ""),
           // Do NOT include the originalItem reference - we want to save QTO objects
-        };
+        } as EnhancedCostItem;
       });
 
     console.log(

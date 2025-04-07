@@ -51,16 +51,14 @@ export class EbkpMapper {
     this.ebkpMap = {};
 
     const uniqueCodes = new Set<string>();
-    let elementsWithValidCodes = 0;
 
-    elements.forEach((element, index) => {
+    elements.forEach((element) => {
       if (!element.ebkpCode) {
         return;
       }
 
       const normalizedCode = this.normalizeEbkpCode(element.ebkpCode);
       uniqueCodes.add(normalizedCode);
-      elementsWithValidCodes++;
 
       if (!this.ebkpMap[normalizedCode]) {
         this.ebkpMap[normalizedCode] = [];

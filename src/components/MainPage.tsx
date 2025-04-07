@@ -194,7 +194,7 @@ const MainPage = () => {
         setTotalCostSum(costSummary.total_from_cost_data);
       }
     } catch (error) {
-      console.error('Error fetching project cost data:', error);
+      console.error("Error fetching project cost data:", error);
     } finally {
       setIsLoadingCost(false);
     }
@@ -354,7 +354,7 @@ const MainPage = () => {
       let data;
       try {
         data = JSON.parse(text);
-      } catch (error) {
+      } catch {
         setLoadingElements(false);
         return [];
       }
@@ -415,7 +415,7 @@ const MainPage = () => {
         setLoadingElements(false);
         return [];
       }
-    } catch (err) {
+    } catch {
       setLoadingElements(false);
       return [];
     }
@@ -453,7 +453,8 @@ const MainPage = () => {
           setLoadingElements(false);
         });
     }
-  }, []); // Empty dependency array ensures this only runs once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array to ensure this only runs once on mount
 
   // Add a refresh button function for cost data
   const refreshCostData = () => {
