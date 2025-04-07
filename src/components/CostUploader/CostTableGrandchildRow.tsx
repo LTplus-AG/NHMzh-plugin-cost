@@ -81,12 +81,25 @@ const CostTableGrandchildRow = ({
     return totalElements;
   };
 
+  // Get unit from MongoDB data (if available)
+  const getQuantityUnit = () => {
+    // If the item has explicit quantity type/unit metadata from MongoDB
+    if (item.quantityUnit) {
+      return item.quantityUnit;
+    }
+
+    // Default to square meters
+    return "m²";
+  };
+
   // Get info about QTO data for this item
   const getQtoInfo = () => {
     // If the item has area from MongoDB
     if (item.area !== undefined) {
       return {
         value: item.area,
+        unit: item.quantityUnit || "m²",
+        type: item.quantityType || "area",
         timestamp: item.kafkaTimestamp || new Date().toISOString(),
         source: item.areaSource || "BIM",
       };
@@ -111,6 +124,9 @@ const CostTableGrandchildRow = ({
           <React.Fragment>
             <div>
               <strong>Quelle:</strong> {qtoInfo.source}
+            </div>
+            <div>
+              <strong>Typ:</strong> {qtoInfo.type}
             </div>
             <div>
               <strong>Aktualisiert:</strong> {formattedTime}
@@ -224,7 +240,7 @@ const CostTableGrandchildRow = ({
               />
             </Tooltip>
           ) : (
-            renderNumber(getMengeValue(item.menge), 2)
+            <>{renderNumber(getMengeValue(item.menge), 2)}</>
           )}
 
           {hasQtoData(item) && <DataSourceInfo />}
@@ -236,7 +252,7 @@ const CostTableGrandchildRow = ({
           ...cellStyles.standardBorder,
         }}
       >
-        {hasQtoData(item) ? "m²" : processField(item.einheit)}
+        {hasQtoData(item) ? getQuantityUnit() : processField(item.einheit)}
       </TableCell>
       <TableCell
         sx={{
@@ -245,9 +261,11 @@ const CostTableGrandchildRow = ({
           ...cellStyles.standardBorder,
         }}
       >
-        {item.kennwert !== null && item.kennwert !== undefined
-          ? renderNumber(item.kennwert)
-          : ""}
+        {item.kennwert !== null && item.kennwert !== undefined ? (
+          <>{renderNumber(item.kennwert)}</>
+        ) : (
+          ""
+        )}
       </TableCell>
       <TableCell
         sx={{
@@ -275,7 +293,7 @@ const CostTableGrandchildRow = ({
               />
             </Tooltip>
           ) : (
-            renderNumber(item.totalChf)
+            <>{renderNumber(item.totalChf)}</>
           )}
         </Box>
       </TableCell>

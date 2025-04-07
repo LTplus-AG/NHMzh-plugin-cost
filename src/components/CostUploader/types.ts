@@ -1,47 +1,67 @@
 export interface CostItem {
-  id?: string;
-  name?: string;
-  code?: string;
-  level?: number | string;
-  cost?: number;
+  /** Child cost items (for hierarchical structure) */
   children?: CostItem[];
+  /** Internal ID for cost items */
+  costId?: string;
+  /** Key for React rendering */
+  key?: string;
+
+  /** eBKP code (primary identifier for cost matching) */
   ebkp?: string;
+  /** Alternative eBKP code field */
+  ebkph?: string;
+  /** Description/name of the item */
   bezeichnung?: string;
-  menge?: number | null;
-  einheit?: string;
-  kennwert?: number | null;
-  chf?: number | null;
-  totalChf?: number | null;
+  /** Additional notes */
   kommentar?: string;
-  is_structural?: boolean;
-  fire_rating?: string;
-  category?: string;
-  element_count?: number;
-  // Fields for Kafka data tracking
-  fromKafka?: boolean;
-  kafkaTimestamp?: string;
-  kafkaSource?: string;
-  areaSource?: string;
+
+  /** Quantity value (typically in m² or linear meters) */
+  menge?: number;
+  /** Unit of measurement (m², m, etc.) */
+  einheit?: string;
+
+  /** Type of quantity measurement (area, length, etc.) from MongoDB */
+  quantityType?: string;
+  /** Unit of quantity (m², m, each, etc.) from MongoDB */
+  quantityUnit?: string;
+
+  /** Unit cost (per unit of measurement) */
+  kennwert?: number;
+  /** Total cost value in CHF */
+  chf?: number;
+  /** Alternative unit cost field */
+  cost_unit?: number;
+  /** Total cost in CHF (calculated) */
+  totalChf?: number;
+
+  /** BIM data area value from MongoDB */
   area?: number;
-  // Store original values before they were updated
-  originalValues?: {
-    menge?: number | null;
-    [key: string]: unknown;
-  };
-  qtoInfo?: {
-    timestamp: string;
-  };
+  /** Source of the area data ('IFC', 'BIM', etc.) */
+  areaSource?: string;
+  /** Timestamp when the BIM data was processed */
+  kafkaTimestamp?: string;
+  /** Number of database elements associated with this item */
   dbElements?: number;
+  /** Total area from database elements */
   dbArea?: number;
-  // Store original item for reference (used in PreviewModal)
-  originalItem?: {
-    ebkp?: string;
-    bezeichnung?: string;
-    kennwert?: number | null;
-    menge?: number | null;
-    einheit?: string;
+  /** Number of elements for this item */
+  element_count?: number;
+
+  /** Original values before BIM data was applied */
+  originalValues?: {
+    /** Original quantity value before BIM data was applied */
+    menge?: number;
+    /** Original cost value before BIM data was applied */
+    chf?: number;
     [key: string]: unknown;
   };
+
+  /** Level information (floor, story, etc.) */
+  level?: string | number;
+  /** Element ID */
+  id?: string;
+
+  /** For MongoDB integration - allows additional properties */
   [key: string]: unknown;
 }
 

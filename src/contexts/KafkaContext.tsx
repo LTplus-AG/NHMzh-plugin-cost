@@ -51,11 +51,20 @@ interface EbkpCodeInfo {
 interface ProjectElement {
   id: string;
   ebkpCode: string;
-  quantity: number;
+  quantity?: {
+    value: number;
+    type: string;
+    unit: string;
+  };
   area: number;
   description?: string;
   category?: string;
   level?: string;
+  ifc_class?: string;
+  type_name?: string;
+  name?: string;
+  is_structural?: boolean;
+  is_external?: boolean;
 }
 
 interface ProjectData {
@@ -143,6 +152,38 @@ declare global {
   }
 }
 
+// Add an interface for the backend element structure above the mapBackendElementToProjectElement function
+interface BackendElement {
+  _id: string;
+  project_id: string;
+  ifc_id?: string;
+  global_id?: string;
+  ifc_class?: string;
+  name?: string;
+  type_name?: string;
+  level?: string;
+  quantity?: {
+    value: number;
+    type: string;
+    unit: string;
+  };
+  area?: number;
+  is_structural?: boolean;
+  is_external?: boolean;
+  classification?: {
+    id: string;
+    name: string;
+    system: string;
+  };
+  properties?: {
+    category?: string;
+    ebkph?: string;
+    level?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 // Provider component that will wrap the app
 export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
   const [backendUrl, setBackendUrl] = useState<string>("");
@@ -182,7 +223,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         wsUrl = import.meta.env.VITE_WEBSOCKET_URL;
       }
     } catch (error) {
-      console.warn("Error accessing environment variables:", error);
+      console.error("Error accessing environment variables:", error);
     }
 
     // Extract the HTTP URL from WebSocket URL for REST API calls
@@ -202,7 +243,6 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
       // Set up connection timeout
       const timeoutId = setTimeout(() => {
         if (ws && ws.readyState !== WebSocket.OPEN) {
-          console.warn("WebSocket connection timeout in KafkaContext");
           if (ws) ws.close();
           setConnectionStatus("DISCONNECTED");
         }
@@ -213,11 +253,8 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
       setWebsocket(ws);
 
       ws.onopen = () => {
-        console.log("WebSocket connection established for KafkaContext");
         clearTimeout(timeoutId);
         setConnectionStatus("CONNECTED");
-
-        // Request available eBKP codes after connection is established
         requestAvailableEbkpCodes(ws);
       };
 
@@ -230,11 +267,6 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
             data.type === "available_ebkp_codes" &&
             Array.isArray(data.codes)
           ) {
-            console.log(
-              "Received available eBKP codes from server:",
-              data.codes
-            );
-
             // Transform the codes into our EbkpCodeInfo format
             const codeObjects: EbkpCodeInfo[] = data.codes.map(
               (code: string) => ({
@@ -276,11 +308,6 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
             typeof data.totalElements === "number" &&
             typeof data.timestamp === "string"
           ) {
-            console.log(
-              "KafkaContext: Received project update notification:",
-              data
-            );
-
             // Store project update information
             setProjectUpdates((prev) => ({
               ...prev,
@@ -308,12 +335,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         setConnectionStatus("DISCONNECTED");
       };
 
-      ws.onclose = (event) => {
-        console.log(
-          `WebSocket connection closed in KafkaContext: code=${
-            event.code
-          }, reason=${event.reason || "No reason"}`
-        );
+      ws.onclose = () => {
         setConnectionStatus("DISCONNECTED");
       };
 
@@ -339,7 +361,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     elementsWithCost: number
   ): Promise<boolean> => {
     if (!backendUrl) {
-      console.warn("Backend URL not available for API calls");
+      console.error("Backend URL not available for API calls");
       return false;
     }
 
@@ -442,13 +464,11 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     handler: (data: Record<string, unknown>) => void
   ): void => {
     messageHandlers[messageId] = handler;
-    console.log(`Registered handler for message ID: ${messageId}`);
   };
 
   // Function to request available eBKP codes from the server
   const requestAvailableEbkpCodes = (ws: WebSocket | null) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.error("Cannot request eBKP codes: WebSocket is not connected");
       return;
     }
 
@@ -459,7 +479,6 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         messageId: `ebkp_codes_${Date.now()}`,
       };
       ws.send(JSON.stringify(message));
-      console.log("Requested available eBKP codes from server");
     } catch (error) {
       console.error("Error requesting eBKP codes:", error);
     }
@@ -475,40 +494,73 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     const normalizedCodes = codes.map((code) => normalizeCode(code));
 
     // Find matching codes from available codes
-    const matches = availableEbkpCodes.filter((codeInfo) =>
+    return availableEbkpCodes.filter((codeInfo) =>
       normalizedCodes.some((code) => code === codeInfo.code)
     );
-
-    console.log(`Matched ${matches.length} out of ${codes.length} codes`);
-    return matches;
   };
 
   // Helper function to normalize a code (similar to backend)
   const normalizeCode = (code: string): string => {
-    // Remove whitespace, convert to uppercase
     return code.trim().toUpperCase();
+  };
+
+  // Update the mapBackendElementToProjectElement function to better handle eBKP codes
+  const mapBackendElementToProjectElement = (
+    element: BackendElement
+  ): ProjectElement => {
+    let ebkpCode = "";
+
+    if (element.classification && element.classification.id) {
+      ebkpCode = element.classification.id;
+    } else if (element.properties && element.properties.ebkph) {
+      ebkpCode = element.properties.ebkph;
+    } else {
+      const possibleFields = ["ebkp_code", "ebkp", "ebkph"];
+      for (const field of possibleFields) {
+        if (element[field]) {
+          ebkpCode = element[field] as string;
+          break;
+        }
+      }
+    }
+
+    let area = 0;
+    if (element.quantity && element.quantity.value) {
+      area = element.quantity.value;
+    } else if (element.area) {
+      area = element.area;
+    }
+
+    return {
+      id: element._id,
+      ebkpCode: ebkpCode,
+      quantity: element.quantity,
+      area: area,
+      description: element.name || "",
+      category: element.ifc_class || element.properties?.category || "",
+      level: element.level || element.properties?.level || "",
+      ifc_class: element.ifc_class || "",
+      type_name: element.type_name || "",
+      name: element.name || "",
+      is_structural: element.is_structural || false,
+      is_external: element.is_external || false,
+    };
   };
 
   // Function to fetch and cache project elements
   const fetchProjectElements = useCallback(
     async (projectName: string): Promise<ProjectElement[]> => {
       if (!backendUrl) {
-        console.error(
-          "Cannot fetch project elements: Backend URL not available"
-        );
         return [];
       }
 
-      // Check if we have cached data that's less than 5 minutes old
       const cachedData = projectDataCache[projectName];
       const now = Date.now();
       if (cachedData && now - cachedData.lastFetched < 5 * 60 * 1000) {
-        console.log(`Using cached project data for ${projectName}`);
         return cachedData.elements;
       }
 
       try {
-        console.log(`Fetching elements for project: ${projectName}`);
         const response = await fetch(
           `${backendUrl}/project-elements/${encodeURIComponent(projectName)}`
         );
@@ -520,50 +572,16 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         }
 
         const elements = await response.json();
-        console.log(
-          `Received ${elements.length} elements for project ${projectName}`
+        const mappedElements = elements.map((element: BackendElement) =>
+          mapBackendElementToProjectElement(element)
         );
 
-        // Transform to our simplified structure
-        const transformedElements: ProjectElement[] = elements
-          .map((element: Record<string, unknown>) => {
-            // Extract eBKP code from various possible locations
-            const properties = element.properties as
-              | Record<string, unknown>
-              | undefined;
-            const ebkpCode =
-              (properties?.classification as { id?: string })?.id ||
-              (properties?.ebkph as string) ||
-              (element.ebkph as string) ||
-              (element.ebkp_code as string) ||
-              (element.ebkp as string) ||
-              "";
+        const elementsWithEbkp = mappedElements.filter(
+          (el: ProjectElement) => el.ebkpCode
+        );
 
-            // Extract quantity/area
-            const quantity = parseFloat(
-              (
-                (element.quantity as string) ||
-                (element.area as string) ||
-                0
-              ).toString()
-            );
-
-            return {
-              id: (element._id as string) || (element.id as string) || "",
-              ebkpCode: ebkpCode.toUpperCase().trim(),
-              quantity: quantity,
-              area: quantity, // Use same value for area
-              description: properties?.description || "",
-              category:
-                (element.category as string) || properties?.category || "",
-              level: (element.level as string) || properties?.level || "",
-            };
-          })
-          .filter((e: ProjectElement) => e.ebkpCode && e.ebkpCode !== "");
-
-        // Build a map for quick access by eBKP code
         const ebkpMap: Record<string, ProjectElement[]> = {};
-        transformedElements.forEach((element) => {
+        elementsWithEbkp.forEach((element: ProjectElement) => {
           const normalizedCode = normalizeEbkpCode(element.ebkpCode);
           if (!ebkpMap[normalizedCode]) {
             ebkpMap[normalizedCode] = [];
@@ -571,9 +589,8 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
           ebkpMap[normalizedCode].push(element);
         });
 
-        // Store in cache
         const projectData: ProjectData = {
-          elements: transformedElements,
+          elements: elementsWithEbkp,
           ebkpMap,
           lastFetched: now,
         };
@@ -583,19 +600,17 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
           [projectName]: projectData,
         }));
 
-        // Also populate the window.__ELEMENT_INFO for PreviewModal
-        const ebkphCodes = transformedElements.map((e) => e.ebkpCode);
+        const ebkphCodes = elementsWithEbkp.map(
+          (e: ProjectElement) => e.ebkpCode
+        );
         window.__ELEMENT_INFO = {
-          elementCount: transformedElements.length,
+          elementCount: elementsWithEbkp.length,
           ebkphCodes: ebkphCodes,
           projects: [projectName],
-          costCodes: ebkphCodes, // Use same codes for both
+          costCodes: ebkphCodes,
         };
 
-        console.log(
-          `Cached ${transformedElements.length} elements for project ${projectName}`
-        );
-        return transformedElements;
+        return elementsWithEbkp;
       } catch (error) {
         console.error(
           `Error fetching project elements: ${
@@ -614,10 +629,8 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
       projectName: string,
       ebkpCode: string
     ): Promise<ProjectElement[]> => {
-      // Normalize the eBKP code for consistency
       const normalizedCode = normalizeEbkpCode(ebkpCode);
 
-      // Ensure we have cached data
       let cachedData = projectDataCache[projectName];
       if (!cachedData) {
         await fetchProjectElements(projectName);
@@ -628,7 +641,6 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         return [];
       }
 
-      // Return elements with the matching code
       return cachedData.ebkpMap[normalizedCode] || [];
     },
     [fetchProjectElements, projectDataCache]
@@ -643,14 +655,8 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
 
     // Remove spaces
     let normalized = upperCode.replace(/\s+/g, "");
-
-    // Normalize format: C01.01 -> C1.1
     normalized = normalized.replace(/([A-Z])0*(\d+)\.0*(\d+)/g, "$1$2.$3");
-
-    // Normalize format without dots: C01 -> C1
     normalized = normalized.replace(/([A-Z])0*(\d+)$/g, "$1$2");
-
-    // Handle case with missing number: C.1 -> C1
     normalized = normalized.replace(/([A-Z])\.(\d+)/g, "$1$2");
 
     return normalized;
@@ -661,19 +667,15 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     (code: string) => {
       if (!code) return null;
 
-      // Normalize the code for consistent matching
       const normalizedCode = normalizeEbkpCode(code);
 
-      // Look through all cached projects for this code
       for (const projectName in projectDataCache) {
         const projectData = projectDataCache[projectName];
         if (!projectData || !projectData.ebkpMap) continue;
 
-        // Check if this code exists in the project's ebkpMap
         const elements = projectData.ebkpMap[normalizedCode] || [];
 
         if (elements.length > 0) {
-          // Calculate total area
           const totalArea = elements.reduce((sum, el) => sum + el.area, 0);
 
           return {

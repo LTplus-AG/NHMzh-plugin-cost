@@ -91,6 +91,9 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
   // Fixed project name - could be made configurable in the future
   const currentProject = "Recyclingzentrum Juch-Areal";
 
+  // Add a state to track if mapping has been applied
+  const [mappingApplied, setMappingApplied] = useState<boolean>(false);
+
   // Function to request re-application of cost data on the server
   const requestReapplyCostData = useCallback(async () => {
     if (connectionStatus !== "CONNECTED") {
@@ -152,13 +155,11 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
 
   // Define initializeMapper first
   const initializeMapper = useCallback(async () => {
-    console.log("Initializing EbkpMapper with project:", currentProject);
     try {
       // Fetch project elements
       const elements = await getProjectElements(currentProject);
 
       if (elements.length === 0) {
-        console.warn("No elements found for project:", currentProject);
         setNotification({
           open: true,
           message: `No elements found for project: ${currentProject}`,
@@ -178,10 +179,7 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
         uniqueCodes: stats.uniqueCodes,
         mappedItems: 0, // Will be updated when metaFile changes
       });
-
-      console.log("EbkpMapper initialized with statistics:", stats);
     } catch (error) {
-      console.error("Error initializing EbkpMapper:", error);
       setNotification({
         open: true,
         message: `Error loading project elements: ${
@@ -194,7 +192,6 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
 
   // Function to completely reset the mapper state, with initializeMapper as dependency
   const resetMapperState = useCallback(() => {
-    console.log("Completely resetting mapper state");
     setMapper(null);
     setMappingStats({
       totalElements: 0,
@@ -222,7 +219,6 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
   // Listen for custom file removal event
   useEffect(() => {
     const handleFileRemoved = () => {
-      console.log("Received cost-file-removed event, resetting mapper state");
       resetMapperState();
     };
 
@@ -245,9 +241,7 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
   // Effect to map quantities when metaFile or mapper changes
   useEffect(() => {
     // Only process if we have both a mapper and metaFile data
-    if (mapper && metaFile && metaFile.data) {
-      console.log("Mapping quantities to cost items");
-
+    if (mapper && metaFile && metaFile.data && !mappingApplied) {
       try {
         // Extract cost items from metaFile
         const costItems = Array.isArray(metaFile.data)
@@ -257,21 +251,27 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
         // Get all items (including children)
         const allItems = getAllItems(costItems);
 
-        // Count items with eBKP codes
+        if (allItems.length === 0) {
+          setNotification({
+            open: true,
+            message: "No items found in the Excel file",
+            severity: "warning",
+          });
+          return;
+        }
+
+        // Check items with eBKP codes
         const itemsWithEbkp = allItems.filter(
           (item) => item.ebkp && item.ebkp !== ""
-        ).length;
-        console.log(
-          `Found ${itemsWithEbkp} items with eBKP codes out of ${allItems.length} total items`
         );
 
-        if (itemsWithEbkp === 0) {
-          console.warn("No eBKP codes found in uploaded file");
+        if (itemsWithEbkp.length === 0) {
           setNotification({
             open: true,
             message: "No eBKP codes found in the uploaded file",
             severity: "warning",
           });
+          setMappingApplied(true); // Mark as applied even though there's nothing to map
           return;
         }
 
@@ -334,8 +334,6 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
           metaFile.data.data = updatedItems;
         }
 
-        console.log(`Updated ${updatedItemsCount} items with quantities`);
-
         // Show notification
         setNotification({
           open: true,
@@ -343,12 +341,15 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
           severity: "success",
         });
 
-        // Request reapply to update the server
+        // Request reapply to update the server, but only once
         if (updatedItemsCount > 0) {
           setTimeout(() => {
             requestReapplyCostData().catch(() => {});
           }, 500);
         }
+
+        // Mark as applied to prevent further reapplies
+        setMappingApplied(true);
       } catch (error) {
         console.error("Error mapping quantities:", error);
         setNotification({
@@ -358,9 +359,18 @@ const FileInfo = ({ metaFile, onRemoveFile, onSendData }: FileInfoProps) => {
           }`,
           severity: "error",
         });
+        setMappingApplied(true); // Mark as applied even on error to prevent constant retries
       }
     }
-  }, [mapper, metaFile, requestReapplyCostData]);
+  }, [mapper, metaFile, requestReapplyCostData, mappingApplied]);
+
+  // Reset mappingApplied when metaFile changes
+  useEffect(() => {
+    if (metaFile) {
+      // Reset the flag when a new file is uploaded
+      setMappingApplied(false);
+    }
+  }, [metaFile?.file]); // Only dependency is the file object itself
 
   const handleCloseNotification = (
     _event?: React.SyntheticEvent | Event,

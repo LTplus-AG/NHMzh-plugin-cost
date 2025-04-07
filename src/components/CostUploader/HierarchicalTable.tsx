@@ -118,7 +118,6 @@ const HierarchicalTable = ({
 
     // Toggle each row that needs to be expanded
     if (itemsToExpand.length > 0) {
-      console.log(`Auto-expanding ${itemsToExpand.length} rows with BIM data`);
       itemsToExpand.forEach((code) => toggleRow(code));
     }
   }, [metaFile.data, toggleRow, expandedRows]);

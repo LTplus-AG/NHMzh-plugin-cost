@@ -265,7 +265,6 @@ const CostUploader = ({
 
           onFileUploaded(fileName, currentDate, status, costData, true);
         }
-        console.log("Cost data successfully saved to backend.");
       } else {
         // Handle error from backend
         console.error(
@@ -308,10 +307,8 @@ const CostUploader = ({
         return result;
       };
 
+      // Create flattened Excel items from the hierarchical data
       const flattenedExcelItems = getAllItems(costData);
-      console.log(
-        `Uploading ${flattenedExcelItems.length} Excel items to server...`
-      );
 
       // Create or get a WebSocket connection
       let ws: WebSocket;
@@ -399,9 +396,6 @@ const CostUploader = ({
       };
 
       ws.send(JSON.stringify(message));
-      console.log(
-        `Excel data sent to server for immediate saving (${flattenedExcelItems.length} items)`
-      );
 
       // Wait for server response
       const response = await new Promise<{
@@ -425,7 +419,6 @@ const CostUploader = ({
             // Ignore parse errors from other messages
           }
         };
-
         ws.addEventListener("message", responseHandler);
 
         const timeoutId = setTimeout(() => {
@@ -434,11 +427,7 @@ const CostUploader = ({
         }, 10000);
       });
 
-      if (response.status === "success") {
-        console.log(
-          `Successfully saved ${response.insertedCount} Excel items to database`
-        );
-      } else {
+      if (response.status !== "success") {
         console.error("Error saving Excel data:", response.message);
       }
     } catch (error) {

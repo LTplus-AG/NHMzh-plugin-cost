@@ -117,6 +117,36 @@ const CostTableRow = ({
   // Use state values for rendering
   const hasQtoInTree = hasQtoInTreeState;
 
+  // Get unit from MongoDB data (if available)
+  const getQuantityUnit = () => {
+    // If the item has explicit quantity type/unit metadata from MongoDB
+    if (item.quantityUnit) {
+      return item.quantityUnit;
+    }
+
+    // Check if any children have quantity unit info
+    if (item.children && item.children.length > 0) {
+      // Try to find a child with quantity unit info
+      for (const child of item.children) {
+        if (child.quantityUnit) {
+          return child.quantityUnit;
+        }
+
+        // Check grandchildren if needed
+        if (child.children && child.children.length > 0) {
+          for (const grandchild of child.children) {
+            if (grandchild.quantityUnit) {
+              return grandchild.quantityUnit;
+            }
+          }
+        }
+      }
+    }
+
+    // Default to square meters
+    return "m²";
+  };
+
   // Update the calculateTotalsFromChildren function to fix TypeScript errors
   const calculateTotalsFromChildren = (
     item: CostItem
@@ -204,6 +234,8 @@ const CostTableRow = ({
     if (item.area !== undefined) {
       return {
         value: item.area,
+        unit: item.quantityUnit || "m²",
+        type: item.quantityType || "area",
         timestamp: item.kafkaTimestamp || new Date().toISOString(),
         source: item.areaSource || "BIM",
       };
@@ -228,6 +260,9 @@ const CostTableRow = ({
           <React.Fragment>
             <div>
               <strong>Quelle:</strong> {qtoInfo.source}
+            </div>
+            <div>
+              <strong>Typ:</strong> {qtoInfo.type}
             </div>
             <div>
               <strong>Aktualisiert:</strong> {formattedTime}
@@ -380,9 +415,9 @@ const CostTableRow = ({
                 </Tooltip>
               </>
             )}
-            {!hasQtoData(item) &&
-              !hasQtoInTree &&
-              renderNumber(getMengeValue(item.menge), 2)}
+            {!hasQtoData(item) && !hasQtoInTree && (
+              <>{renderNumber(getMengeValue(item.menge), 2)}</>
+            )}
 
             {hasQtoData(item) && <DataSourceInfo />}
           </Box>
@@ -393,7 +428,7 @@ const CostTableRow = ({
             ...cellStyles.standardBorder,
           }}
         >
-          {hasQtoData(item) ? "m²" : processField(item.einheit)}
+          {hasQtoData(item) ? getQuantityUnit() : processField(item.einheit)}
         </TableCell>
         <TableCell
           sx={{
@@ -402,9 +437,11 @@ const CostTableRow = ({
             ...cellStyles.standardBorder,
           }}
         >
-          {item.kennwert !== null && item.kennwert !== undefined
-            ? renderNumber(item.kennwert)
-            : ""}
+          {item.kennwert !== null && item.kennwert !== undefined ? (
+            <>{renderNumber(item.kennwert)}</>
+          ) : (
+            ""
+          )}
         </TableCell>
         <TableCell
           sx={{
@@ -438,7 +475,7 @@ const CostTableRow = ({
                 />
               </Tooltip>
             ) : (
-              renderNumber(item.totalChf)
+              <>{renderNumber(item.totalChf)}</>
             )}
           </Box>
         </TableCell>
