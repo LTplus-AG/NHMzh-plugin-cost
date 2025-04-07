@@ -19,6 +19,27 @@ const {
 // Load environment variables
 dotenv.config();
 
+// Validate required environment variables
+// Check if MONGODB_URI is provided - if it is, we don't need separate username/password
+let requiredEnvVars = ["MONGODB_URI"];
+
+// If MONGODB_URI is not provided, then username and password are required
+if (!process.env.MONGODB_URI) {
+  requiredEnvVars.push("MONGODB_USERNAME", "MONGODB_PASSWORD");
+}
+
+const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
+if (missingEnvVars.length > 0) {
+  console.error(
+    `ERROR: Missing required environment variables: ${missingEnvVars.join(
+      ", "
+    )}`
+  );
+  throw new Error(
+    `Missing required environment variables: ${missingEnvVars.join(", ")}`
+  );
+}
+
 // Configuration
 const config = {
   kafka: {
@@ -36,13 +57,17 @@ const config = {
   },
   mongodb: {
     enabled: true, // Always enable MongoDB
-    uri:
+    // Force authSource=admin in the MongoDB URI
+    uri: (
       process.env.MONGODB_URI ||
-      "mongodb://admin:secure_password@mongodb:27017/?authSource=admin",
+      "mongodb://admin:secure_password@mongodb:27017/?authSource=admin"
+    ).replace("authSource=cost", "authSource=admin"),
     database: process.env.MONGODB_DATABASE || "cost",
     costCollection: "costData",
     elementsCollection: "elements",
     auth: {
+      // If we have MONGODB_URI but not individual credentials, use defaults
+      // These are only used if connecting without the full URI
       username: process.env.MONGODB_USERNAME || "admin",
       password: process.env.MONGODB_PASSWORD || "secure_password",
     },

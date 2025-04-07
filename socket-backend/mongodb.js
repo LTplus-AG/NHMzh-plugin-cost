@@ -4,10 +4,27 @@ const dotenv = require("dotenv");
 // Ensure environment variables are loaded
 dotenv.config();
 
-// MongoDB connection URI - use environment variable if available
-const uri =
+// MongoDB connection URI - require environment variable
+if (!process.env.MONGODB_URI) {
+  console.error("ERROR: MONGODB_URI environment variable is not set");
+  throw new Error("MONGODB_URI environment variable is required");
+}
+
+// Use the full URI directly - credentials should be included in the URI
+const uri = (
   process.env.MONGODB_URI ||
-  "mongodb://admin:secure_password@mongodb:27017/?authSource=admin";
+  "mongodb://admin:secure_password@mongodb:27017/?authSource=admin"
+).replace("authSource=cost", "authSource=admin");
+
+// Provide a warning if URI doesn't seem to contain authentication
+if (!uri.includes("@") && !uri.includes("localhost")) {
+  console.warn(
+    "WARNING: MONGODB_URI doesn't appear to contain authentication information."
+  );
+  console.warn(
+    "Make sure authentication is configured properly (either in the URI or via X.509 certificates)."
+  );
+}
 
 // Database names
 const costDbName = process.env.MONGODB_DATABASE || "cost";
@@ -29,8 +46,6 @@ async function connectToMongoDB() {
   try {
     // Create a new MongoClient if one doesn't exist
     if (!client) {
-      console.log("Connecting to MongoDB at mongodb:27017");
-
       client = new MongoClient(uri, {
         connectTimeoutMS: 5000,
         serverSelectionTimeoutMS: 5000,

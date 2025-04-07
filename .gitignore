@@ -24,3 +24,4 @@ dist-ssr
 *.sw?
 socket-backend/.env
 public/templates/*
+.env.fastbim

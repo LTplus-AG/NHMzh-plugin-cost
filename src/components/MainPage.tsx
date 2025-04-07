@@ -482,7 +482,7 @@ const MainPage = () => {
     return (
       <>
         <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }} color="common.black">
             Elemente nach Kategorie:
           </Typography>
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
@@ -498,7 +498,7 @@ const MainPage = () => {
         </Box>
 
         <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }} color="common.black">
             Elemente nach eBKP:
           </Typography>
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
@@ -514,12 +514,20 @@ const MainPage = () => {
           </Box>
         </Box>
 
-        <Box sx={{ mb: 1 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        <Box
+          sx={{ mb: 1, flexGrow: 1, display: "flex", flexDirection: "column" }}
+        >
+          <Typography variant="subtitle2" sx={{ mb: 1 }} color="common.black">
             Neueste Elemente:
           </Typography>
-          <TableContainer sx={{ maxHeight: 200 }}>
-            <Table size="small">
+          <TableContainer
+            sx={{
+              overflow: "auto",
+              height: "calc(100vh - 500px)",
+              minHeight: "200px",
+            }}
+          >
+            <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell>Element ID</TableCell>
@@ -528,7 +536,7 @@ const MainPage = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {currentElements.slice(0, 5).map((element) => (
+                {currentElements.map((element) => (
                   <TableRow key={element._id}>
                     <TableCell>{element._id.substring(0, 6)}...</TableCell>
                     <TableCell>
@@ -544,15 +552,6 @@ const MainPage = () => {
                     </TableCell>
                   </TableRow>
                 ))}
-                {currentElements.length > 5 && (
-                  <TableRow>
-                    <TableCell colSpan={3} align="center">
-                      <Typography variant="caption" color="text.secondary">
-                        {currentElements.length - 5} weitere Elemente...
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
-                )}
               </TableBody>
             </Table>
           </TableContainer>
@@ -825,13 +824,13 @@ const MainPage = () => {
                       display: "flex",
                       flexDirection: "column",
                       width: "100%",
-                      overflow: "hidden",
                     }}
                   >
                     <Typography
                       variant="subtitle1"
                       fontWeight="bold"
                       sx={{ mb: 2 }}
+                      color="common.black"
                     >
                       Projektelemente
                       <Button
@@ -846,7 +845,7 @@ const MainPage = () => {
                       </Button>
                     </Typography>
 
-                    <Box sx={{ overflow: "auto", flex: 1 }}>
+                    <Box sx={{ flex: 1, overflow: "visible" }}>
                       {renderElementStats()}
                     </Box>
                   </Box>
