@@ -4,85 +4,75 @@ const dotenv = require("dotenv");
 // Ensure environment variables are loaded
 dotenv.config();
 
-// MongoDB connection URI - require environment variable
-if (!process.env.MONGODB_URI) {
-  console.error("ERROR: MONGODB_URI environment variable is not set");
-  throw new Error("MONGODB_URI environment variable is required");
+// Configuration - Replace with environment variables in production
+const MONGODB_HOST = process.env.MONGODB_HOST || "mongodb";
+const MONGODB_PORT = process.env.MONGODB_PORT || "27017";
+const MONGODB_COST_USER = process.env.MONGODB_COST_USER;
+const MONGODB_COST_PASSWORD = process.env.MONGODB_COST_PASSWORD;
+const MONGODB_DATABASE = process.env.MONGODB_DATABASE || "cost"; // Cost DB
+const MONGODB_QTO_DATABASE = process.env.MONGODB_QTO_DATABASE || "qto"; // QTO DB
+
+if (!MONGODB_COST_USER || !MONGODB_COST_PASSWORD) {
+  console.error(
+    "ERROR: MONGODB_COST_USER or MONGODB_COST_PASSWORD environment variables are not set. Cost service DB operations will fail."
+  );
+  // Decide if you want to throw an error or try to continue without auth (not recommended)
+  // throw new Error("Missing MongoDB credentials for cost service");
 }
 
-// Use the full URI directly - credentials should be included in the URI
-const uri = (
-  process.env.MONGODB_URI ||
-  "mongodb://admin:secure_password@mongodb:27017/?authSource=admin"
-).replace("authSource=cost", "authSource=admin");
+// Construct the connection URI using specific service credentials
+const mongoUri = `mongodb://${MONGODB_COST_USER}:${MONGODB_COST_PASSWORD}@${MONGODB_HOST}:${MONGODB_PORT}/${MONGODB_DATABASE}?authSource=admin`;
 
-// Provide a warning if URI doesn't seem to contain authentication
-if (!uri.includes("@") && !uri.includes("localhost")) {
-  console.warn(
-    "WARNING: MONGODB_URI doesn't appear to contain authentication information."
-  );
-  console.warn(
-    "Make sure authentication is configured properly (either in the URI or via X.509 certificates)."
-  );
-}
-
-// Database names
-const costDbName = process.env.MONGODB_DATABASE || "cost";
-const qtoDbName = "qto";
-const sharedDbName = "shared";
-
-// MongoDB client instance
 let client = null;
 let costDb = null;
 let qtoDb = null;
-let sharedDb = null;
 let connectionRetries = 0;
-const MAX_RETRIES = 5;
+const MAX_RETRIES = parseInt(process.env.MONGODB_CONNECT_MAX_RETRIES || "5");
 
 /**
- * Initialize the MongoDB connection
+ * Connect to MongoDB and initialize database references
  */
 async function connectToMongoDB() {
+  if (client) {
+    return { client, costDb, qtoDb };
+  }
+
+  console.log(
+    `Attempting MongoDB connection to ${MONGODB_HOST} using user ${MONGODB_COST_USER}...`
+  );
+
   try {
-    // Create a new MongoClient if one doesn't exist
-    if (!client) {
-      client = new MongoClient(uri, {
-        connectTimeoutMS: 5000,
-        serverSelectionTimeoutMS: 5000,
-        retryWrites: true,
-        retryReads: true,
-      });
+    client = new MongoClient(mongoUri, {
+      useNewUrlParser: true, // Deprecated but included for compatibility awareness
+      useUnifiedTopology: true, // Deprecated but included for compatibility awareness
+      serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
+      connectTimeoutMS: 10000, // Connection timeout
+    });
 
-      await client.connect();
-      console.log("Successfully connected to MongoDB");
+    await client.connect();
+    costDb = client.db(MONGODB_DATABASE);
+    qtoDb = client.db(MONGODB_QTO_DATABASE); // Also get a handle to the QTO DB
 
-      // Get database references
-      costDb = client.db(costDbName);
-      qtoDb = client.db(qtoDbName);
-      sharedDb = client.db(sharedDbName);
+    console.log("Successfully connected to MongoDB");
+    console.log(
+      `Using databases: cost=${costDb.databaseName}, qto=${qtoDb.databaseName}`
+    );
 
-      console.log(
-        `Using databases: cost=${costDbName}, qto=${qtoDbName}, shared=${sharedDbName}`
-      );
+    // Ensure collections exist (optional, but good practice)
+    await initializeCollections();
 
-      // Create collections if they don't exist
-      await initializeCollections();
-    }
-
-    return {
-      client,
-      costDb,
-      qtoDb,
-      sharedDb,
-    };
+    return { client, costDb, qtoDb };
   } catch (error) {
     console.error("Error connecting to MongoDB:", error);
-    // Reset client so we can try again later
-    client = null;
-    costDb = null;
-    qtoDb = null;
-    sharedDb = null;
-    throw error;
+    // Clean up client if connection failed
+    if (client) {
+      await client.close();
+      client = null;
+      costDb = null;
+      qtoDb = null;
+    }
+    // Rethrow or handle as appropriate for the application startup
+    throw new Error(`Failed to connect to MongoDB: ${error.message}`);
   }
 }
 
@@ -91,30 +81,45 @@ async function connectToMongoDB() {
  */
 async function initializeCollections() {
   try {
-    // Check if collections exist first
-    const costCollections = await costDb.listCollections().toArray();
-    const costCollectionNames = costCollections.map((c) => c.name);
+    const costCollectionNames = await costDb.listCollections().toArray();
+    const qtoCollectionNames = await qtoDb.listCollections().toArray();
+
+    // Ensure required collections exist in QTO database
+    if (!qtoCollectionNames.some((c) => c.name === "elements")) {
+      await qtoDb.createCollection("elements");
+      console.log("Created elements collection in QTO DB");
+    }
+    if (!qtoCollectionNames.some((c) => c.name === "projects")) {
+      await qtoDb.createCollection("projects");
+      console.log("Created projects collection in QTO DB");
+    }
 
     // Create CostData collection if it doesn't exist
-    if (!costCollectionNames.includes("costData")) {
+    if (!costCollectionNames.some((c) => c.name === "costData")) {
       await costDb.createCollection("costData");
       console.log("Created costData collection");
     }
 
     // Create CostSummaries collection if it doesn't exist
-    if (!costCollectionNames.includes("costSummaries")) {
+    if (!costCollectionNames.some((c) => c.name === "costSummaries")) {
       await costDb.createCollection("costSummaries");
       console.log("Created costSummaries collection");
     }
+    // Create CostElements collection if it doesn't exist
+    if (!costCollectionNames.some((c) => c.name === "costElements")) {
+      await costDb.createCollection("costElements");
+      console.log("Created costElements collection");
+    }
 
-    // Create indexes (idempotent operation - safe to run if they already exist)
-    await costDb.collection("costData").createIndex({ element_id: 1 });
-    await costDb.collection("costSummaries").createIndex({ project_id: 1 });
+    // REMOVED: Index creation is handled by init-mongo.js
+    // await costDb.collection("costData").createIndex({ element_id: 1 });
+    // await costDb.collection("costSummaries").createIndex({ project_id: 1 });
 
-    console.log("MongoDB collections initialized");
+    console.log("MongoDB collections checked/ensured by cost-websocket");
   } catch (error) {
-    console.error("Error initializing collections:", error);
-    throw error;
+    console.error("Error ensuring collections exist (cost-websocket):", error);
+    // Do not throw error here, allow service to continue if collections exist
+    // throw error;
   }
 }
 
@@ -132,7 +137,6 @@ async function closeMongoDB() {
       client = null;
       costDb = null;
       qtoDb = null;
-      sharedDb = null;
     }
   }
 }
@@ -168,7 +172,6 @@ async function ensureConnection() {
     client,
     costDb,
     qtoDb,
-    sharedDb,
   };
 }
 

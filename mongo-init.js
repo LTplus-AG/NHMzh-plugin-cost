@@ -19,7 +19,13 @@
 // Connect to admin database
 db = db.getSiblingDB("admin");
 
-// Create admin user
+// Create admin user with broad privileges NEEDED FOR INITIALIZATION ONLY
+// ****** PRODUCTION SECURITY WARNING ******
+// After initial deployment and successful execution of this script,
+// MANUALLY REVOKE unnecessary roles (like dbAdminAnyDatabase, userAdminAnyDatabase)
+// from this admin user, following the principle of least privilege.
+// Rely on service-specific users for ongoing operations.
+// ****** PRODUCTION SECURITY WARNING ******
 db.createUser({
   user: "admin_user",
   pwd: "admin_password",
@@ -30,9 +36,15 @@ db.createUser({
   ],
 });
 
-// Create databases and collections
-const databases = ["qto", "cost", "lca", "shared"];
+// Database names - use environment variables or defaults
+const qtoDbName = process.env.MONGODB_QTO_DATABASE || "qto";
+const costDbName = process.env.MONGODB_DATABASE || "cost";
+const lcaDbName = process.env.MONGODB_LCA_DATABASE || "lca";
+const sharedDbName = process.env.MONGODB_SHARED_DATABASE || "shared";
 
+const databases = [qtoDbName, costDbName, lcaDbName, sharedDbName];
+
+// Create databases and collections
 databases.forEach((dbName) => {
   db = db.getSiblingDB(dbName);
 
@@ -85,36 +97,36 @@ databases.forEach((dbName) => {
 // Create service-specific users
 db = db.getSiblingDB("admin");
 
-// QTO service user
+// QTO service user - restricted to only what it needs
 db.createUser({
-  user: "qto_service",
-  pwd: "secure_password_qto",
+  user: qtoUser,
+  pwd: qtoPassword,
   roles: [
-    { role: "readWrite", db: "qto" },
-    { role: "read", db: "shared" },
+    { role: "readWrite", db: qtoDbName },
+    { role: "read", db: sharedDbName },
   ],
 });
 
-// Cost service user
+// Cost service user - restricted to only what it needs
 db.createUser({
-  user: "cost_service",
-  pwd: "secure_password_cost",
+  user: costUser,
+  pwd: costPassword,
   roles: [
-    { role: "readWrite", db: "cost" },
-    { role: "read", db: "qto" },
-    { role: "read", db: "shared" },
+    { role: "readWrite", db: costDbName },
+    { role: "read", db: qtoDbName },
+    { role: "read", db: sharedDbName },
   ],
 });
 
-// LCA service user
+// LCA service user - restricted to only what it needs
 db.createUser({
-  user: "lca_service",
-  pwd: "secure_password_lca",
+  user: lcaUser,
+  pwd: lcaPassword,
   roles: [
-    { role: "readWrite", db: "lca" },
-    { role: "read", db: "cost" },
-    { role: "read", db: "qto" },
-    { role: "read", db: "shared" },
+    { role: "readWrite", db: lcaDbName },
+    { role: "read", db: costDbName },
+    { role: "read", db: qtoDbName },
+    { role: "read", db: sharedDbName },
   ],
 });
 

@@ -19,27 +19,6 @@ const {
 // Load environment variables
 dotenv.config();
 
-// Validate required environment variables
-// Check if MONGODB_URI is provided - if it is, we don't need separate username/password
-let requiredEnvVars = ["MONGODB_URI"];
-
-// If MONGODB_URI is not provided, then username and password are required
-if (!process.env.MONGODB_URI) {
-  requiredEnvVars.push("MONGODB_USERNAME", "MONGODB_PASSWORD");
-}
-
-const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
-if (missingEnvVars.length > 0) {
-  console.error(
-    `ERROR: Missing required environment variables: ${missingEnvVars.join(
-      ", "
-    )}`
-  );
-  throw new Error(
-    `Missing required environment variables: ${missingEnvVars.join(", ")}`
-  );
-}
-
 // Configuration
 const config = {
   kafka: {
@@ -57,22 +36,24 @@ const config = {
   },
   mongodb: {
     enabled: true, // Always enable MongoDB
-    // Force authSource=admin in the MongoDB URI
-    uri: (
-      process.env.MONGODB_URI ||
-      "mongodb://admin:secure_password@mongodb:27017/?authSource=admin"
-    ).replace("authSource=cost", "authSource=admin"),
     database: process.env.MONGODB_DATABASE || "cost",
-    costCollection: "costData",
-    elementsCollection: "elements",
-    auth: {
-      // If we have MONGODB_URI but not individual credentials, use defaults
-      // These are only used if connecting without the full URI
-      username: process.env.MONGODB_USERNAME || "admin",
-      password: process.env.MONGODB_PASSWORD || "secure_password",
-    },
+    costCollection: process.env.MONGODB_COST_COLLECTION || "costData",
+    elementsCollection: process.env.MONGODB_ELEMENTS_COLLECTION || "elements",
   },
 };
+
+// Additional validation for database/collection names
+if (!config.mongodb.database) {
+  throw new Error("MONGODB_DATABASE environment variable is required.");
+}
+if (!config.mongodb.costCollection) {
+  throw new Error("MONGODB_COST_COLLECTION environment variable is required.");
+}
+if (!config.mongodb.elementsCollection) {
+  throw new Error(
+    "MONGODB_ELEMENTS_COLLECTION environment variable is required."
+  );
+}
 
 // Store unit costs by EBKPH code in memory
 const unitCostsByEbkph = {};
@@ -89,7 +70,9 @@ const elementsByProject = {};
 // Add at the top with other global variables
 let cachedMatches = null;
 let lastMatchTimestamp = null;
-const MATCH_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+const MATCH_CACHE_DURATION = parseInt(
+  process.env.MATCH_CACHE_DURATION_MS || "300000"
+); // Default 5 minutes
 
 console.log("Starting WebSocket server with configuration:", {
   kafkaBroker: config.kafka.broker,
@@ -98,7 +81,6 @@ console.log("Starting WebSocket server with configuration:", {
   websocketPort: config.websocket.port,
   elementFile: config.storage.elementFile,
   mongodbEnabled: config.mongodb.enabled,
-  mongodbUri: config.mongodb.uri,
   mongodbDatabase: config.mongodb.database,
   mongodbCostCollection: config.mongodb.costCollection,
   mongodbElementsCollection: config.mongodb.elementsCollection,
