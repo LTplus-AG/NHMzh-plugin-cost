@@ -867,11 +867,17 @@ async function getCostElementsByEbkpCode(ebkpCode) {
 }
 
 /**
- * Save cost data in batch
- * This function now only processes QTO elements for costElements collection
- * Excel data is already saved to costData in a separate step
+ * Save a batch of cost data
+ * @param {Array} costItems - Array of cost data items
+ * @param {string} projectName - Name of the project
+ * @param {Function} sendKafkaMessage - Optional callback to send Kafka messages
+ * @returns {Promise<Object>} Result with counts
  */
-async function saveCostDataBatch(costItems, projectName) {
+async function saveCostDataBatch(
+  costItems,
+  projectName,
+  sendKafkaMessage = null
+) {
   try {
     // Ensure MongoDB connection and get database references
     const { costDb: costDatabase, qtoDb: qtoDatabase } =
@@ -1151,6 +1157,37 @@ async function saveCostDataBatch(costItems, projectName) {
                 source: "excel-import",
                 timestamp: new Date(),
               });
+
+              // Send Kafka message for this element if callback provided
+              if (sendKafkaMessage && typeof sendKafkaMessage === "function") {
+                // Prepare element with cost data for Kafka
+                const elementWithCost = {
+                  ...qtoElement,
+                  project: projectName,
+                  cost_unit: kennwert,
+                  cost: elementTotalCost,
+                  ebkph: ebkpCode,
+                  is_structural:
+                    qtoElement.properties?.structuralRole === "load_bearing" ||
+                    false,
+                  fire_rating: qtoElement.properties?.fireRating || "",
+                  category:
+                    qtoElement.category ||
+                    qtoElement.properties?.category ||
+                    "",
+                  level: qtoElement.level || qtoElement.properties?.level || "",
+                  element_id: qtoElementId,
+                  id: qtoElementId,
+                };
+
+                // Send to Kafka
+                sendKafkaMessage(elementWithCost).catch((err) => {
+                  console.error(
+                    `Error sending Kafka message for element ${qtoElementId}:`,
+                    err
+                  );
+                });
+              }
             }
           });
         }

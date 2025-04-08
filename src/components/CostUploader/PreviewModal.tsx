@@ -569,8 +569,10 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
       <DialogTitle sx={{ pb: 0 }}>
-        <Typography variant="h5">Kosten-Update Vorschau</Typography>
-        <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 2 }}>
+        <Typography variant="h5" component="div">
+          Kosten-Update Vorschau
+        </Typography>
+        <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
           Überprüfen Sie die Kostenübertragung, bevor Sie die Daten übermitteln
         </Typography>
 
@@ -738,7 +740,11 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
 
                 {/* Match Quality */}
                 <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography
+                    variant="subtitle1"
+                    fontWeight="bold"
+                    gutterBottom
+                  >
                     Übereinstimmungsqualität
                   </Typography>
 
@@ -849,7 +855,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
             {/* Tab 1: Detailed Matches */}
             {activeTab === 1 && (
               <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
                   BIM Elemente und zugeordnete Kosten
                 </Typography>
 
@@ -1060,7 +1066,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
               <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
                 <Box display="flex" alignItems="center" mb={2}>
                   <WarningIcon color="warning" sx={{ mr: 1 }} />
-                  <Typography variant="h6">
+                  <Typography variant="subtitle1" fontWeight="bold">
                     Nicht zugeordnete Kostenposten
                   </Typography>
                 </Box>

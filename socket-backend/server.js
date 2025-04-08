@@ -470,7 +470,7 @@ const server = http.createServer((req, res) => {
           if (!projectId && config.mongodb.enabled) {
             // Try to look up project ID from elements if we don't have it
             try {
-              const project = await sharedDb.collection("projects").findOne({
+              const project = await qtoDb.collection("projects").findOne({
                 name: { $regex: new RegExp(`^${projectName}$`, "i") },
               });
 
@@ -596,6 +596,106 @@ const server = http.createServer((req, res) => {
         2
       ) // Pretty print JSON
     );
+  } else if (req.url === "/send-test-cost") {
+    sendTestCostMessage()
+      .then((result) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            status: result ? "success" : "error",
+            message: result
+              ? "Test cost message sent"
+              : "Failed to send test cost message",
+            timestamp: new Date().toISOString(),
+          })
+        );
+      })
+      .catch((error) => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: error.message }));
+      });
+  } else if (req.url.startsWith("/test-kafka-message/")) {
+    const projectName = decodeURIComponent(
+      req.url.replace("/test-kafka-message/", "")
+    );
+
+    console.log(`Testing Kafka message for project: ${projectName}`);
+
+    (async () => {
+      try {
+        // Connect to MongoDB
+        const { costDb, qtoDb } = await connectToMongoDB();
+
+        if (!qtoDb) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Failed to connect to MongoDB" }));
+          return;
+        }
+
+        // Find project
+        const project = await qtoDb.collection("projects").findOne({
+          name: { $regex: new RegExp(`^${projectName}$`, "i") },
+        });
+
+        if (!project) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({ error: `Project ${projectName} not found` })
+          );
+          return;
+        }
+
+        // Get first element
+        const element = await qtoDb.collection("elements").findOne({
+          project_id: project._id,
+        });
+
+        if (!element) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: `No elements found for project ${projectName}`,
+            })
+          );
+          return;
+        }
+
+        // Prepare element with cost data
+        const enhancedElement = {
+          ...element,
+          project: projectName,
+          cost_unit: 100, // Sample value
+          cost: 1000, // Sample value
+          is_structural:
+            element.properties?.structuralRole === "load_bearing" || false,
+          fire_rating: element.properties?.fireRating || "",
+          element_id: element._id.toString(),
+          id: element._id.toString(),
+          ebkph: element.properties?.classification?.id || "C1.1", // Sample fallback
+          category: element.category || element.properties?.category || "wall",
+          level: element.level || element.properties?.level || "Level 1",
+        };
+
+        // Send to Kafka
+        const result = await sendEnhancedElementToKafka(enhancedElement);
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            success: result,
+            message: result
+              ? "Element sent to Kafka successfully"
+              : "Failed to send element to Kafka",
+            elementId: element._id.toString(),
+            project: projectName,
+          })
+        );
+      } catch (error) {
+        console.error(`Error testing Kafka message:`, error);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    })();
   } else {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
@@ -1032,7 +1132,11 @@ wss.on("connection", async (ws, req) => {
         try {
           // Call the MongoDB function to save the batch directly
           // This function already handles creating/finding the project and elements
-          const result = await saveCostDataBatch(costItems, projectName);
+          const result = await saveCostDataBatch(
+            costItems,
+            projectName,
+            sendEnhancedElementToKafka
+          );
           console.log(
             `Batch save result for project '${projectName}':`,
             result
@@ -1146,7 +1250,9 @@ wss.on("connection", async (ws, req) => {
             // Step 4: Process matched items using the existing function to update costElements
             const matchedResult = await saveCostDataBatch(
               matchedItems,
-              projectName
+              projectName,
+              // Pass sendEnhancedElementToKafka as a callback
+              sendEnhancedElementToKafka
             );
             console.log(
               `Processed ${matchedItems.length} matched items for costElements collection`
@@ -1657,6 +1763,23 @@ async function run() {
                         // Update project total
                         projectTotalCost += totalCost;
                         elementsWithCost++;
+
+                        // Send enhanced element to cost topic with proper format
+                        sendEnhancedElementToKafka({
+                          ...element,
+                          project: projectName,
+                          filename: element.filename || "unknown.ifc",
+                          is_structural:
+                            element.properties?.structuralRole ===
+                              "load_bearing" || false,
+                          fire_rating: element.properties?.fireRating || "",
+                          ebkph:
+                            element.properties?.classification?.id ||
+                            element.ebkph ||
+                            ebkpCode,
+                          cost_unit: costUnit,
+                          cost: totalCost,
+                        });
                       });
 
                       // Broadcast cost match notification
@@ -1893,34 +2016,60 @@ async function sendEnhancedElementToKafka(enhancedElement) {
       console.log("Cost producer connected to Kafka");
     }
 
-    // Log what we're sending to help with debugging
-    console.log("Sending element to cost topic with structure:", {
+    // Format the message according to the required structure
+    const costDataItem = {
       id: enhancedElement.element_id || enhancedElement.id,
-      category: enhancedElement.category,
-      level: enhancedElement.level,
-      ebkph: enhancedElement.ebkph,
-      area: enhancedElement.area,
-      cost_unit: enhancedElement.cost_unit,
-      cost: enhancedElement.cost,
+      category: enhancedElement.category || "",
+      level: enhancedElement.level || "",
+      isStructural: enhancedElement.is_structural || false,
+      fireRating: enhancedElement.fire_rating || "",
+      ebkph: enhancedElement.ebkph || "",
+      cost: enhancedElement.cost || 0,
+      costUnit: enhancedElement.cost_unit || 0,
+    };
+
+    const costMessage = {
+      project: enhancedElement.project || "",
+      filename: enhancedElement.filename || "",
+      timestamp: new Date().toISOString(),
+      data: [costDataItem],
+      fileID: `${enhancedElement.project || ""}/${
+        enhancedElement.filename || ""
+      }`,
+    };
+
+    // Log what we're sending to help with debugging
+    console.log("Sending cost message to Kafka topic:", {
+      project: costMessage.project,
+      filename: costMessage.filename,
+      dataCount: costMessage.data.length,
+      sampleItem: {
+        id: costDataItem.id,
+        category: costDataItem.category,
+        ebkph: costDataItem.ebkph,
+        cost: costDataItem.cost,
+        costUnit: costDataItem.costUnit,
+      },
     });
 
-    // Send the enhanced element to Kafka
+    // Send the formatted message to Kafka
     const result = await costProducer.send({
       topic: config.kafka.costTopic,
       messages: [
         {
-          value: JSON.stringify(enhancedElement),
-          key: enhancedElement.element_id || enhancedElement.id,
+          value: JSON.stringify(costMessage),
+          key:
+            costMessage.project ||
+            enhancedElement.element_id ||
+            enhancedElement.id,
         },
       ],
     });
 
-    console.log(
-      `Enhanced element sent to Kafka topic ${config.kafka.costTopic}`
-    );
+    console.log(`Cost message sent to Kafka topic ${config.kafka.costTopic}`);
     return true;
   } catch (error) {
-    console.error("Error sending enhanced element to Kafka:", error);
+    console.error("Error sending cost message to Kafka:", error);
     return false;
   }
 }
@@ -2302,4 +2451,35 @@ async function batchProcessCodeMatches(
   lastMatchTimestamp = Date.now();
 
   return matches;
+}
+
+// Add this after the shutdown function
+// Send a test cost message to Kafka for testing purposes
+async function sendTestCostMessage() {
+  const timestamp = new Date().toISOString();
+
+  // Create a test element with cost data
+  const testElement = {
+    element_id: `test_element_${Date.now()}`,
+    project: "Test Project",
+    filename: "test.ifc",
+    category: "ifcwallstandardcase",
+    level: "Level_1",
+    is_structural: true,
+    fire_rating: "F30",
+    ebkph: "C2.1",
+    cost: 100.0,
+    cost_unit: 10.0,
+  };
+
+  console.log("Sending test cost message to Kafka...");
+  const result = await sendEnhancedElementToKafka(testElement);
+
+  if (result) {
+    console.log("Test cost message sent successfully");
+  } else {
+    console.error("Failed to send test cost message");
+  }
+
+  return result;
 }
