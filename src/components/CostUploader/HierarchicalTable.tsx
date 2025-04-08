@@ -1,24 +1,15 @@
-import {
-  Alert,
-  TableContainer,
-  Paper,
-  Table,
-  TableBody,
-  Box,
-  Chip,
-} from "@mui/material";
+import { Alert, TableContainer, Paper, Table, TableBody } from "@mui/material";
 import { CostItem, MetaFile } from "./types";
 import { columnWidths } from "./styles";
 import { formatNumber } from "./utils";
 import TableHeader from "./TableHeader";
 import CostTableRow from "./CostTableRow";
-import SyncIcon from "@mui/icons-material/Sync";
 import {
   createTableContainerStyle,
   tableStyle,
   createCellStyles,
 } from "./styles";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 // Define CellStyles interface to match the one used in CostTableRow
 interface CellStyles {
@@ -54,6 +45,13 @@ const HierarchicalTable = ({
   // Cell styles for alignment and formatting
   const cellStyles: CellStyles = createCellStyles(isMobile);
 
+  // Keep track of rows we've already auto-expanded
+  const autoExpandedRef = useRef<Set<string>>(new Set());
+  // Track if initial auto-expansion has been performed
+  const initialExpansionDoneRef = useRef<boolean>(false);
+  // Store file ID to detect file changes
+  const fileIdRef = useRef<string | null>(null);
+
   // Helper function to get the data array safely
   const getDataArray = (): CostItem[] => {
     if (!metaFile.data) return [];
@@ -68,7 +66,8 @@ const HierarchicalTable = ({
     return [];
   };
 
-  // Count items with BIM/IFC data
+  // Get count of items with BIM data
+  // This function is still useful for coloring rows and expanding rows with BIM data
   const countItemsWithBimData = (items: CostItem[]): number => {
     if (!items || !items.length) return 0;
 
@@ -104,26 +103,61 @@ const HierarchicalTable = ({
     return false;
   };
 
-  // Auto-expand rows that have BIM data when component mounts or data changes
+  // Reset when the file changes
   useEffect(() => {
-    const dataArray = getDataArray();
-    const itemsToExpand: string[] = [];
+    const currentFileId = metaFile?.file?.name || null;
 
-    // Find all parent rows that have BIM data in their children
+    // If the file has changed, reset our tracking
+    if (fileIdRef.current !== currentFileId) {
+      fileIdRef.current = currentFileId;
+      initialExpansionDoneRef.current = false;
+      autoExpandedRef.current.clear();
+    }
+  }, [metaFile?.file?.name]);
+
+  // One-time auto-expansion of BIM data rows
+  useEffect(() => {
+    // Skip if we've already done the initial expansion for this file
+    // or if there's no data to work with
+    if (initialExpansionDoneRef.current || !metaFile?.data) {
+      return;
+    }
+
+    const dataArray = getDataArray();
+    if (dataArray.length === 0) return;
+
+    // Find all parent rows that have BIM data
+    const rowsToExpand: string[] = [];
+
     dataArray.forEach((item) => {
-      if (item.ebkp && hasItemBimData(item) && !expandedRows[item.ebkp]) {
-        itemsToExpand.push(item.ebkp);
+      if (item.ebkp && hasItemBimData(item)) {
+        rowsToExpand.push(item.ebkp);
+        autoExpandedRef.current.add(item.ebkp);
       }
     });
 
-    // Toggle each row that needs to be expanded
-    if (itemsToExpand.length > 0) {
-      itemsToExpand.forEach((code) => toggleRow(code));
-    }
-  }, [metaFile.data, toggleRow, expandedRows]);
+    // Expand all at once
+    if (rowsToExpand.length > 0) {
+      console.log(`Auto-expanding ${rowsToExpand.length} rows with BIM data`);
+      // Use a fake expanded state to calculate what needs to be expanded
+      const fakeExpandedState = { ...expandedRows };
 
-  // Get count of items with BIM data
-  const bimItemsCount = countItemsWithBimData(getDataArray());
+      // Expand only rows that aren't already expanded
+      rowsToExpand.forEach((code) => {
+        if (!fakeExpandedState[code]) {
+          fakeExpandedState[code] = true;
+          toggleRow(code);
+        }
+      });
+    }
+
+    // Mark that we've done the initial expansion
+    initialExpansionDoneRef.current = true;
+
+    // Calculate BIM data count for logging
+    const bimDataCount = countItemsWithBimData(dataArray);
+    console.log(`Found ${bimDataCount} items with BIM data in this Excel file`);
+  }, [metaFile?.data, toggleRow, expandedRows]);
 
   // Render a number with hover effect showing the full value
   const renderNumber = (
@@ -149,31 +183,6 @@ const HierarchicalTable = ({
           Fehlende Spalten in der Excel-Datei:{" "}
           {metaFile.missingHeaders.join(", ")}
         </Alert>
-      )}
-
-      {/* BIM Data Indicator */}
-      {bimItemsCount > 0 && (
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            mb: 1,
-            mt: 1,
-          }}
-        >
-          <Chip
-            icon={<SyncIcon />}
-            size="small"
-            label={`${bimItemsCount} Positionen mit BIM Daten`}
-            color="info"
-            variant="outlined"
-            sx={{
-              height: 24,
-              "& .MuiChip-label": { fontWeight: 500 },
-            }}
-          />
-        </Box>
       )}
 
       <TableContainer

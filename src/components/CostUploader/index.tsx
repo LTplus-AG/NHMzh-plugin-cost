@@ -1,4 +1,4 @@
-import { useState, useEffect, ReactNode } from "react";
+import { useState, useEffect, ReactNode, useCallback } from "react";
 import {
   Box,
   CircularProgress,
@@ -11,6 +11,7 @@ import FileDropzone from "./FileDropzone";
 import FileInfo from "./FileInfo";
 import HierarchicalTable from "./HierarchicalTable";
 import PreviewModal, { EnhancedCostItem } from "./PreviewModal";
+import BimMapper from "./BimMapper";
 
 // Define the WebSocket response interfaces
 interface BatchResponseData {
@@ -36,7 +37,7 @@ interface BimMappingStatusEvent extends CustomEvent {
 
 interface CostUploaderProps {
   onFileUploaded?: (
-    fileName: string,
+    fileName: string | null,
     date?: string,
     status?: string,
     costData?: CostItem[],
@@ -46,6 +47,8 @@ interface CostUploaderProps {
   totalCost: number;
   elementsComponent?: ReactNode;
   projectName: string;
+  triggerPreview?: boolean;
+  onPreviewClosed?: () => void;
 }
 
 const CostUploader = ({
@@ -54,6 +57,8 @@ const CostUploader = ({
   totalCost,
   elementsComponent,
   projectName,
+  triggerPreview,
+  onPreviewClosed,
 }: CostUploaderProps) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
@@ -65,6 +70,9 @@ const CostUploader = ({
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [previewOpen, setPreviewOpen] = useState(false);
 
+  // Add state to track the number of mapped items
+  const [mappedItemsCount, setMappedItemsCount] = useState(0);
+
   const toggleRow = (code: string) => {
     setExpandedRows((prev: Record<string, boolean>) => ({
       ...prev,
@@ -73,45 +81,35 @@ const CostUploader = ({
   };
 
   const handleRemoveFile = () => {
-    // If there was a file and it was passed to the parent, notify that it's being removed
     if (metaFile && onFileUploaded) {
-      // Keep the same filename but pass null data to indicate removal
-      const fileName = metaFile.file.name;
-      const currentDate = new Date().toLocaleString("de-CH");
-      const status = "Gelöscht";
-      console.log(`Removing file: ${fileName}`);
-      onFileUploaded(fileName, currentDate, status, [], false);
+      onFileUploaded(null, undefined, "Gelöscht", [], false);
     }
-
-    // Reset all state related to the file
     setMetaFile(null);
     setExpandedRows({});
     setPreviewOpen(false);
-
-    // Dispatch a custom event to notify other components about file removal
-    // This will help ensure proper resetting of state in the FileInfo component
     const resetEvent = new CustomEvent("cost-file-removed", {
       detail: { timestamp: Date.now() },
     });
     window.dispatchEvent(resetEvent);
+  };
 
-    // Add a small delay before allowing new file upload to ensure clean state
-    setIsLoading(true);
-    setTimeout(() => {
-      console.log("File removal complete, state reset");
-      setIsLoading(false);
-    }, 300);
+  const handleClosePreviewInternal = () => {
+    setPreviewOpen(false);
+    if (onPreviewClosed) {
+      onPreviewClosed();
+    }
   };
 
   const handleShowPreview = () => {
-    setPreviewOpen(true);
+    if (metaFile) {
+      setPreviewOpen(true);
+    }
   };
 
   const handleConfirmPreview = async (enhancedData: EnhancedCostItem[]) => {
-    // Ensure we have data to send
-    if (!metaFile || !enhancedData || enhancedData.length === 0) {
-      console.warn("No enhanced data to send to backend.");
-      setPreviewOpen(false); // Close preview even if nothing sent
+    if (!metaFile) {
+      console.error("Cannot confirm preview without metaFile.");
+      handleClosePreviewInternal();
       return;
     }
 
@@ -123,14 +121,12 @@ const CostUploader = ({
         `Sending ${enhancedData.length} matched QTO elements to update costElements (Excel data already saved in costData)`
       );
 
-      // Extract all Excel items from metaFile
       const allExcelItems = metaFile
         ? Array.isArray(metaFile.data)
           ? metaFile.data
           : metaFile.data.data
         : [];
 
-      // Flatten the hierarchical data to get all Excel items
       const getAllItems = (items: CostItem[]): CostItem[] => {
         let result: CostItem[] = [];
         items.forEach((item) => {
@@ -147,25 +143,19 @@ const CostUploader = ({
         `Including ${flattenedExcelItems.length} Excel items for reference (already saved in costData)`
       );
 
-      // Use the sendCostBatchToServer alternative:
-      // Create a WebSocket if it doesn't exist
       let ws = (window as { ws?: WebSocket }).ws;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn("WebSocket not connected, trying to reconnect");
-        // Try to reconnect
         try {
-          // Use environment variable for WebSocket URL, provide a default if not set
           const wsUrl =
             import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
 
           ws = new WebSocket(wsUrl);
           (window as { ws?: WebSocket }).ws = ws;
-          // Wait for connection
           await new Promise((resolve, reject) => {
             if (ws) {
               ws.onopen = resolve;
               ws.onerror = reject;
-              // Set timeout
               setTimeout(
                 () => reject(new Error("WebSocket connection timeout")),
                 5000
@@ -180,14 +170,12 @@ const CostUploader = ({
         }
       }
 
-      // Create a unique message ID
       const messageId = `batch_${Date.now()}${Math.random()
         .toString(36)
         .substring(2, 7)}`;
 
-      // Prepare the message with both matched items and all Excel data
       const message = {
-        type: "save_cost_batch_full", // Use the new message type
+        type: "save_cost_batch_full",
         messageId,
         payload: {
           projectName,
@@ -196,18 +184,15 @@ const CostUploader = ({
         },
       };
 
-      // Send the message
       ws.send(JSON.stringify(message));
       console.log(`Full cost batch sent to server for project ${projectName}`);
 
-      // Wait for response with promise
       const response: BatchResponseData = await new Promise(
         (resolve, reject) => {
           const responseHandler = (event: MessageEvent) => {
             try {
               const response: BatchResponseData = JSON.parse(event.data);
 
-              // Check if this is the response for our message
               if (
                 response.type === "save_cost_batch_full_response" &&
                 response.messageId === messageId
@@ -221,10 +206,8 @@ const CostUploader = ({
             }
           };
 
-          // Add the event listener
           ws.addEventListener("message", responseHandler);
 
-          // Set a timeout
           const timeoutId = setTimeout(() => {
             ws.removeEventListener("message", responseHandler);
             reject(
@@ -232,7 +215,6 @@ const CostUploader = ({
             );
           }, 30000);
 
-          // Handle WebSocket close
           const closeHandler = () => {
             ws.removeEventListener("message", responseHandler);
             clearTimeout(timeoutId);
@@ -240,7 +222,6 @@ const CostUploader = ({
           };
           ws.addEventListener("close", closeHandler, { once: true });
 
-          // Clean up the close handler when promise resolves
           Promise.resolve().then(() => {
             ws.removeEventListener("close", closeHandler);
           });
@@ -248,13 +229,11 @@ const CostUploader = ({
       );
 
       if (response.status === "success") {
-        // Notify parent component (MainPage) about the successful update
         if (onFileUploaded) {
           const fileName = metaFile.file.name;
           const currentDate = new Date().toLocaleString("de-CH");
-          const status = "Gespeichert"; // Update status to indicate successful save
+          const status = "Gespeichert";
 
-          // Get original cost data if needed (or pass enhancedData)
           const costData = Array.isArray(metaFile.data)
             ? metaFile.data
             : metaFile.data.data;
@@ -262,21 +241,18 @@ const CostUploader = ({
           onFileUploaded(fileName, currentDate, status, costData, true);
         }
       } else {
-        // Handle error from backend
         console.error(
           "Error saving cost data to backend:",
           response.message || "Unknown error"
         );
-        // Optionally: show an error message to the user
         // TODO: Add user-facing error feedback
       }
     } catch (error) {
       console.error("Failed to send cost data batch:", error);
-      // Optionally: show an error message to the user
       // TODO: Add user-facing error feedback
     } finally {
       setIsLoading(false);
-      setPreviewOpen(false); // Close the modal regardless of success/failure
+      handleClosePreviewInternal();
     }
   };
 
@@ -284,14 +260,13 @@ const CostUploader = ({
     setMetaFile(newMetaFile);
     setIsLoading(true);
     setMappingMessage("Excel Daten werden gespeichert...");
+    console.log("handleFileUploaded started");
 
     try {
-      // Extract data array based on format
       const costData = Array.isArray(newMetaFile.data)
         ? newMetaFile.data
         : newMetaFile.data.data;
 
-      // Flatten the hierarchical data to get all Excel items
       const getAllItems = (items: CostItem[]): CostItem[] => {
         let result: CostItem[] = [];
         items.forEach((item) => {
@@ -303,11 +278,10 @@ const CostUploader = ({
         return result;
       };
 
-      // Create flattened Excel items from the hierarchical data
       const flattenedExcelItems = getAllItems(costData);
+      console.log("Excel data flattened");
 
-      // Create or get a WebSocket connection
-      let ws: WebSocket;
+      let ws: WebSocket | undefined;
       const customWindow = window as unknown as {
         ws?: WebSocket;
         VITE_WEBSOCKET_URL?: string;
@@ -315,85 +289,108 @@ const CostUploader = ({
 
       if (customWindow.ws && customWindow.ws.readyState === WebSocket.OPEN) {
         ws = customWindow.ws;
+        console.log("Reusing existing WebSocket connection");
       } else {
-        // Try to create a new connection
+        console.log(
+          "No existing WebSocket connection found or connection not open. Attempting to create new connection."
+        );
         let wsUrl = "ws://localhost:8001";
         if (customWindow.VITE_WEBSOCKET_URL) {
           wsUrl = customWindow.VITE_WEBSOCKET_URL;
+          console.log(`Using WebSocket URL from window: ${wsUrl}`);
         } else if (import.meta.env.VITE_WEBSOCKET_URL) {
           wsUrl = import.meta.env.VITE_WEBSOCKET_URL;
+          console.log(`Using WebSocket URL from env: ${wsUrl}`);
+        } else {
+          console.log(`Using default WebSocket URL: ${wsUrl}`);
         }
 
-        ws = new WebSocket(wsUrl);
-        customWindow.ws = ws;
+        try {
+          ws = new WebSocket(wsUrl);
+          customWindow.ws = ws;
+          console.log("New WebSocket object created");
 
-        // Wait for connection
-        await new Promise<void>((resolve, reject) => {
-          const onOpen = () => {
-            ws.removeEventListener("open", onOpen);
-            ws.removeEventListener("error", onError);
-            resolve();
-          };
+          await new Promise<void>((resolve, reject) => {
+            console.log("Waiting for WebSocket connection to open...");
+            const onOpen = () => {
+              console.log("WebSocket connection opened successfully");
+              ws?.removeEventListener("open", onOpen);
+              ws?.removeEventListener("error", onError);
+              resolve();
+            };
 
-          const onError = () => {
-            ws.removeEventListener("open", onOpen);
-            ws.removeEventListener("error", onError);
-            reject(new Error("WebSocket connection failed"));
-          };
+            const onError = (event: Event) => {
+              console.error("WebSocket connection error:", event);
+              ws?.removeEventListener("open", onOpen);
+              ws?.removeEventListener("error", onError);
+              reject(new Error("WebSocket connection failed"));
+            };
 
-          ws.addEventListener("open", onOpen);
-          ws.addEventListener("error", onError);
+            ws?.addEventListener("open", onOpen);
+            ws?.addEventListener("error", onError);
 
-          // Set timeout
-          setTimeout(() => {
-            ws.removeEventListener("open", onOpen);
-            ws.removeEventListener("error", onError);
-            reject(new Error("WebSocket connection timeout"));
-          }, 5000);
-        });
+            const timeoutId = setTimeout(() => {
+              console.error("WebSocket connection timed out after 5 seconds");
+              ws?.removeEventListener("open", onOpen);
+              ws?.removeEventListener("error", onError);
+              reject(new Error("WebSocket connection timeout"));
+            }, 5000);
+
+            ws?.addEventListener("open", () => clearTimeout(timeoutId), {
+              once: true,
+            });
+            ws?.addEventListener("error", () => clearTimeout(timeoutId), {
+              once: true,
+            });
+          });
+        } catch (connectionError) {
+          console.error(
+            "Failed to establish WebSocket connection:",
+            connectionError
+          );
+          setIsLoading(false);
+          return;
+        }
       }
 
-      // First send a delete message to remove existing data for this project
-      const deleteMessageId = `delete_${Date.now()}${Math.random()
-        .toString(36)
-        .substring(2, 7)}`;
+      if (!ws) {
+        console.error(
+          "WebSocket connection is not available after attempting to establish."
+        );
+        setIsLoading(false);
+        return;
+      }
 
-      // Send delete message - this will clear existing data
-      const deleteMessage = {
-        type: "delete_project_data",
-        messageId: deleteMessageId,
-        payload: {
-          projectName,
-        },
-      };
-
-      ws.send(JSON.stringify(deleteMessage));
-      console.log(
-        `Sent delete request for existing project data: ${projectName}`
-      );
-
-      // Wait briefly to ensure delete completes
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      // Create a unique message ID
       const messageId = `upload_${Date.now()}${Math.random()
         .toString(36)
         .substring(2, 7)}`;
 
-      // Send the Excel data to the server immediately
       const message = {
         type: "save_excel_data",
         messageId,
         payload: {
           projectName,
           excelItems: flattenedExcelItems,
-          replaceExisting: true, // Add this flag to ensure it replaces existing data
+          replaceExisting: false,
         },
       };
 
-      ws.send(JSON.stringify(message));
+      console.log(
+        `Attempting to send save_excel_data message (ID: ${messageId}) for update/insert`
+      );
+      try {
+        ws.send(JSON.stringify(message));
+        console.log(`Sent save_excel_data message (ID: ${messageId})`);
+      } catch (sendError) {
+        console.error(
+          `Error sending save_excel_data message (ID: ${messageId}):`,
+          sendError
+        );
+        setIsLoading(false);
+        return;
+      }
 
-      // Wait for server response
+      console.log(`Waiting for save_excel_data_response (ID: ${messageId})...`);
       const response = await new Promise<{
         status: string;
         message: string;
@@ -407,50 +404,102 @@ const CostUploader = ({
               data.type === "save_excel_data_response" &&
               data.messageId === messageId
             ) {
-              ws.removeEventListener("message", responseHandler);
+              console.log(
+                `Received save_excel_data_response (ID: ${messageId}):`,
+                data
+              );
+              ws?.removeEventListener("message", responseHandler);
               clearTimeout(timeoutId);
               resolve(data);
             }
-          } catch {
-            // Ignore parse errors from other messages
+          } catch (parseError) {
+            console.warn(
+              "Ignoring WebSocket message parse error:",
+              parseError,
+              "Data:",
+              event.data
+            );
           }
         };
-        ws.addEventListener("message", responseHandler);
+        ws?.addEventListener("message", responseHandler);
 
         const timeoutId = setTimeout(() => {
-          ws.removeEventListener("message", responseHandler);
+          console.error(
+            `Timeout waiting for save_excel_data_response (ID: ${messageId}) after 10 seconds`
+          );
+          ws?.removeEventListener("message", responseHandler);
           reject(new Error("Timeout waiting for save_excel_data_response"));
         }, 10000);
+
+        const closeHandler = () => {
+          console.warn(
+            `WebSocket closed while waiting for save_excel_data_response (ID: ${messageId})`
+          );
+          ws?.removeEventListener("message", responseHandler);
+          clearTimeout(timeoutId);
+          reject(
+            new Error("WebSocket connection closed while waiting for response")
+          );
+        };
+        ws?.addEventListener("close", closeHandler, { once: true });
+
+        Promise.resolve().finally(() => {
+          ws?.removeEventListener("close", closeHandler);
+        });
       });
 
       if (response.status !== "success") {
-        console.error("Error saving Excel data:", response.message);
+        console.error(
+          `Error saving Excel data (ID: ${messageId}):`,
+          response.message
+        );
+      } else {
+        console.log(
+          `Successfully saved Excel data (ID: ${messageId}). Count: ${response.insertedCount}`
+        );
       }
     } catch (error) {
-      console.error("Error uploading Excel data:", error);
+      console.error("Error during handleFileUploaded process:", error);
     } finally {
+      console.log("handleFileUploaded finished, setting isLoading to false.");
       setIsLoading(false);
     }
 
-    // Pass the cost data to the parent component
     if (onFileUploaded && newMetaFile.data) {
+      console.log("Calling onFileUploaded callback for parent component.");
       const fileName = newMetaFile.file.name;
       const currentDate = new Date().toLocaleString("de-CH");
       const status = "Vorschau";
 
-      // Extract data array based on format
       const costData = Array.isArray(newMetaFile.data)
         ? newMetaFile.data
         : newMetaFile.data.data;
 
-      onFileUploaded(fileName, currentDate, status, costData);
+      onFileUploaded(fileName, currentDate, status, costData, false);
+    } else {
+      console.log(
+        "Skipping onFileUploaded callback (no callback function or no data)."
+      );
     }
   };
 
-  // Add event listener for BIM mapping status
+  const handleQuantitiesMapped = useCallback((count: number) => {
+    console.log(`BIM mapper updated ${count} items with quantities`);
+
+    // Store the count in state
+    setMappedItemsCount(count);
+
+    if (count > 0) {
+      setMappingMessage(`${count} Mengen aus BIM-Modell aktualisiert`);
+      setIsLoading(true);
+      setTimeout(() => {
+        setIsLoading(false);
+      }, 1500);
+    }
+  }, []);
+
   useEffect(() => {
     const handleMappingStatus = (event: BimMappingStatusEvent) => {
-      // Update both loading state and message
       if (event.detail.isMapping) {
         setIsLoading(true);
         setMappingMessage(
@@ -461,13 +510,11 @@ const CostUploader = ({
       }
     };
 
-    // Add event listener
     window.addEventListener(
       "bim-mapping-status",
       handleMappingStatus as EventListener
     );
 
-    // Clean up
     return () => {
       window.removeEventListener(
         "bim-mapping-status",
@@ -476,13 +523,19 @@ const CostUploader = ({
     };
   }, []);
 
+  useEffect(() => {
+    if (triggerPreview && !previewOpen && metaFile) {
+      console.log("Preview triggered by prop change.");
+      handleShowPreview();
+    }
+  }, [triggerPreview, metaFile]);
+
   return (
     <Box
       className="flex flex-col h-full"
       position="relative"
       sx={{ overflow: "hidden" }}
     >
-      {/* Single Loading Indicator */}
       {isLoading && (
         <Box
           position="fixed"
@@ -515,6 +568,12 @@ const CostUploader = ({
         </Box>
       )}
 
+      <BimMapper
+        metaFile={metaFile}
+        projectName={projectName}
+        onQuantitiesMapped={handleQuantitiesMapped}
+      />
+
       {!metaFile ? (
         <Box
           sx={{
@@ -528,7 +587,6 @@ const CostUploader = ({
             onFileUploaded={handleFileUploaded}
             setIsLoading={setIsLoading}
           />
-          {/* Render the elements component below the dropzone with flex: 1 to expand */}
           {elementsComponent}
         </Box>
       ) : (
@@ -538,6 +596,7 @@ const CostUploader = ({
               metaFile={metaFile}
               onRemoveFile={handleRemoveFile}
               onSendData={handleShowPreview}
+              mappedItems={mappedItemsCount}
             />
 
             <HierarchicalTable
@@ -550,10 +609,9 @@ const CostUploader = ({
               totalElements={totalElements}
             />
 
-            {/* Preview Modal */}
             <PreviewModal
               open={previewOpen}
-              onClose={() => setPreviewOpen(false)}
+              onClose={handleClosePreviewInternal}
               onConfirm={handleConfirmPreview}
               metaFile={metaFile}
               totalCost={totalCost}

@@ -20,7 +20,7 @@ import {
   CircularProgress,
   SelectChangeEvent,
 } from "@mui/material";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import CostUploader from "./CostUploader/index";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -28,12 +28,11 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import { CostItem } from "./CostUploader/types";
 import { useKafka } from "../contexts/KafkaContext";
 
-// Define a type for uploaded files with date and status
-type UploadedFile = {
-  name: string;
-  date: string;
-  status: string;
-  totalCost?: number;
+// Define a type for cost file info
+type CostFileInfo = {
+  fileName: string | null;
+  date: string | null;
+  status: string | null;
 };
 
 // MongoDB element data structure
@@ -103,7 +102,7 @@ const MainPage = () => {
   const Instructions = [
     {
       label: "Kostendaten hochladen",
-      description: `Laden Sie Ihre Kostendaten im Excel-Format hoch. Die Daten werden anschließend in einer hierarchischen Übersicht angezeigt.`,
+      description: `Laden Sie Ihre Kostendaten im Excel-Format hoch. Die Daten werden anschliessend in einer hierarchischen Übersicht angezeigt.`,
     },
     {
       label: "Daten überprüfen",
@@ -139,7 +138,11 @@ const MainPage = () => {
   const [selectedProject, setSelectedProject] = useState(
     Object.keys(projectDetailsMap)[0]
   );
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [costFileInfo, setCostFileInfo] = useState<CostFileInfo>({
+    fileName: null,
+    date: null,
+    status: null,
+  });
   const [totalCostSum, setTotalCostSum] = useState<number>(0);
   const [isLoadingCost, setIsLoadingCost] = useState<boolean>(false);
 
@@ -157,105 +160,173 @@ const MainPage = () => {
     Record<string, number>
   >({});
 
+  // Add state for filters
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedEbkps, setSelectedEbkps] = useState<string[]>([]);
+
   const fetchProjectCostData = async (projectName: string) => {
     setIsLoadingCost(true);
+    let retryCount = 0;
+    const maxRetries = 2; // Reduce from 3 to 2 retries to minimize noise
+    const initialBackoff = 500; // 500ms
+
+    // Create a local flag to track if we've already logged the main error
+    let errorLogged = false;
+
+    const attemptFetch = async (): Promise<number> => {
+      try {
+        let apiBaseUrl = "";
+
+        // Use environment variable for WebSocket URL, provide a default if not set
+        const wsUrl =
+          import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
+
+        const wsProtocol = wsUrl.startsWith("wss:") ? "https:" : "http:";
+        const httpUrl = wsUrl.replace(/^ws(s)?:\/\//, "");
+        apiBaseUrl = `${wsProtocol}//${httpUrl}`;
+
+        const encodedProjectName = encodeURIComponent(projectName);
+        const costApiUrl = `${apiBaseUrl}/project-cost/${encodedProjectName}`;
+
+        // Avoid logging the same request URL multiple times during retries
+        if (retryCount === 0) {
+          console.log(`Fetching cost data from: ${costApiUrl}`);
+        }
+
+        const response = await fetch(costApiUrl);
+
+        if (!response.ok) {
+          // Parse the error details (if any)
+          let errorDetails = "";
+          try {
+            const errorText = await response.text();
+            const errorJson = JSON.parse(errorText);
+            errorDetails = errorJson.error || errorText;
+
+            // Log the main error only once, not on every retry
+            if (!errorLogged) {
+              console.error(`Backend API error: ${errorDetails}`);
+              errorLogged = true;
+            }
+          } catch {
+            // Parse error - just use a default message
+            errorDetails = "Unknown error";
+          }
+
+          // If we've hit the max retries, return default value
+          if (retryCount >= maxRetries) {
+            if (!errorLogged) {
+              console.error(
+                `Max retries exceeded for project cost data: ${errorDetails}`
+              );
+            }
+            return 0;
+          }
+
+          // Otherwise retry with exponential backoff (less verbose logging)
+          retryCount++;
+          const backoff = initialBackoff * Math.pow(2, retryCount - 1);
+          console.log(
+            `Retrying cost data fetch (attempt ${retryCount}/${maxRetries})`
+          );
+
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+          return attemptFetch();
+        }
+
+        const costSummary: ProjectCostSummary = await response.json();
+
+        if (costSummary && costSummary.total_from_elements !== undefined) {
+          return costSummary.total_from_elements;
+        } else if (
+          costSummary &&
+          costSummary.total_from_cost_data !== undefined
+        ) {
+          return costSummary.total_from_cost_data;
+        }
+
+        return 0;
+      } catch (error) {
+        // Only log the first occurrence of an error to reduce noise
+        if (!errorLogged) {
+          console.error("Error fetching project cost data:", error);
+          errorLogged = true;
+        }
+
+        // If we've hit the max retries, return default value
+        if (retryCount >= maxRetries) {
+          return 0;
+        }
+
+        // Otherwise retry with exponential backoff
+        retryCount++;
+        const backoff = initialBackoff * Math.pow(2, retryCount - 1);
+        console.log(
+          `Retrying cost data fetch (attempt ${retryCount}/${maxRetries})`
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        return attemptFetch();
+      }
+    };
+
     try {
-      let apiBaseUrl = "";
-
-      // Use environment variable for WebSocket URL, provide a default if not set
-      const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
-
-      const wsProtocol = wsUrl.startsWith("wss:") ? "https:" : "http:";
-      const httpUrl = wsUrl.replace(/^ws(s)?:\/\//, "");
-      apiBaseUrl = `${wsProtocol}//${httpUrl}`;
-
-      const encodedProjectName = encodeURIComponent(projectName);
-      const costApiUrl = `${apiBaseUrl}/project-cost/${encodedProjectName}`;
-
-      const response = await fetch(costApiUrl);
-
-      if (!response.ok) {
-        setIsLoadingCost(false);
-        return;
-      }
-
-      const costSummary: ProjectCostSummary = await response.json();
-
-      if (costSummary && costSummary.total_from_elements !== undefined) {
-        setTotalCostSum(costSummary.total_from_elements);
-      } else if (
-        costSummary &&
-        costSummary.total_from_cost_data !== undefined
-      ) {
-        setTotalCostSum(costSummary.total_from_cost_data);
-      }
+      const totalCost = await attemptFetch();
+      setTotalCostSum(totalCost);
     } catch (error) {
-      console.error("Error fetching project cost data:", error);
+      // Final fallback - only log once at the end of all retries
+      if (!errorLogged) {
+        console.error("Failed to fetch cost data after all retries:", error);
+      }
+      setTotalCostSum(0); // Set to zero as a fallback
     } finally {
       setIsLoadingCost(false);
     }
   };
 
-  const handleFileUploaded = (
-    fileName: string,
-    date?: string,
-    status?: string,
-    costData?: CostItem[],
-    isUpdate?: boolean
-  ) => {
-    if (status === "Gelöscht") {
-      fetchProjectCostData(selectedProject);
+  const handleCostFileUploaded = useCallback(
+    (
+      fileName: string | null,
+      date?: string,
+      status?: string,
+      costData?: CostItem[],
+      isUpdate?: boolean
+    ) => {
+      if (status === "Gelöscht" || !fileName) {
+        fetchProjectCostData(selectedProject);
+        setCostFileInfo({ fileName: null, date: null, status: null });
+        setTotalCostSum(0);
+        console.log("Cost file info reset.");
+        return;
+      }
 
-      setUploadedFiles((prev) =>
-        prev.map((file) =>
-          file.name === fileName
-            ? {
-                ...file,
-                status: "Gelöscht",
-                date: date || file.date,
-              }
-            : file
-        )
-      );
-
-      return;
-    } else {
+      let calculatedTotal = 0;
       if (costData && costData.length > 0) {
-        const calculatedTotal = costData.reduce((sum, item) => {
+        calculatedTotal = costData.reduce((sum, item) => {
           return sum + (item.totalChf || 0);
         }, 0);
-
         setTotalCostSum(calculatedTotal);
       }
-    }
 
-    if (isUpdate) {
-      setTimeout(() => {
-        fetchProjectCostData(selectedProject);
-      }, 1000);
+      const newStatus = isUpdate ? "Erfolgreich" : status || "Vorschau";
+      const newDate = date || new Date().toLocaleString("de-CH");
 
-      setUploadedFiles((prev) =>
-        prev.map((file) =>
-          file.name === fileName && file.status === "Vorschau"
-            ? {
-                ...file,
-                status: "Erfolgreich",
-                date: date || file.date,
-              }
-            : file
-        )
-      );
-    } else {
-      setUploadedFiles((prev) => [
-        {
-          name: fileName,
-          date: date || new Date().toLocaleDateString(),
-          status: status || "Vorschau",
-        },
-        ...prev,
-      ]);
-    }
-  };
+      setCostFileInfo({
+        fileName: fileName,
+        date: newDate,
+        status: newStatus,
+      });
+
+      console.log(`Cost file info updated: ${fileName}, Status: ${newStatus}`);
+
+      if (newStatus === "Erfolgreich" || newStatus === "Gespeichert") {
+        setTimeout(() => {
+          fetchProjectCostData(selectedProject);
+        }, 1000);
+      }
+    },
+    [selectedProject]
+  );
 
   const formatCurrency = (amount: number): string => {
     return amount.toLocaleString("de-CH", {
@@ -454,6 +525,65 @@ const MainPage = () => {
     fetchProjectCostData(selectedProject);
   };
 
+  // Function to toggle category filter
+  const toggleCategoryFilter = (category: string) => {
+    // If clicking an already selected category, just deselect it
+    if (selectedCategories.includes(category)) {
+      setSelectedCategories((prev) => prev.filter((c) => c !== category));
+    } else {
+      // When selecting a category, clear eBKP filters and set the new category
+      setSelectedEbkps([]);
+      setSelectedCategories((prev) =>
+        prev.includes(category)
+          ? prev.filter((c) => c !== category)
+          : [...prev, category]
+      );
+    }
+  };
+
+  // Function to toggle eBKP filter
+  const toggleEbkpFilter = (ebkp: string) => {
+    // If clicking an already selected eBKP, just deselect it
+    if (selectedEbkps.includes(ebkp)) {
+      setSelectedEbkps((prev) => prev.filter((e) => e !== ebkp));
+    } else {
+      // When selecting an eBKP, clear category filters and set the new eBKP
+      setSelectedCategories([]);
+      setSelectedEbkps((prev) =>
+        prev.includes(ebkp) ? prev.filter((e) => e !== ebkp) : [...prev, ebkp]
+      );
+    }
+  };
+
+  // Clear all filters
+  const clearFilters = () => {
+    setSelectedCategories([]);
+    setSelectedEbkps([]);
+  };
+
+  // Function to get filtered elements
+  const getFilteredElements = () => {
+    if (selectedCategories.length === 0 && selectedEbkps.length === 0) {
+      return currentElements;
+    }
+
+    return currentElements.filter((element) => {
+      const category =
+        element.ifc_class || element.properties?.category || "Unknown";
+      const ebkp =
+        element.classification?.id || element.properties?.ebkph || "Unknown";
+
+      // Either match by category OR match by eBKP (since they're now mutually exclusive)
+      if (selectedCategories.length > 0) {
+        return selectedCategories.includes(category);
+      } else if (selectedEbkps.length > 0) {
+        return selectedEbkps.includes(ebkp);
+      }
+
+      return true;
+    });
+  };
+
   // Function to render element statistics
   const renderElementStats = () => {
     if (loadingElements) {
@@ -472,6 +602,8 @@ const MainPage = () => {
       );
     }
 
+    const filteredElements = getFilteredElements();
+
     return (
       <>
         <Box sx={{ mb: 2 }}>
@@ -484,7 +616,14 @@ const MainPage = () => {
                 key={category}
                 label={`${category}: ${count}`}
                 size="small"
-                variant="outlined"
+                variant={
+                  selectedCategories.includes(category) ? "filled" : "outlined"
+                }
+                color={
+                  selectedCategories.includes(category) ? "primary" : "default"
+                }
+                onClick={() => toggleCategoryFilter(category)}
+                sx={{ cursor: "pointer" }}
               />
             ))}
           </Box>
@@ -500,8 +639,10 @@ const MainPage = () => {
                 key={code}
                 label={`${code}: ${count}`}
                 size="small"
-                variant="outlined"
-                color="primary"
+                variant={selectedEbkps.includes(code) ? "filled" : "outlined"}
+                color={selectedEbkps.includes(code) ? "primary" : "default"}
+                onClick={() => toggleEbkpFilter(code)}
+                sx={{ cursor: "pointer" }}
               />
             ))}
           </Box>
@@ -510,9 +651,33 @@ const MainPage = () => {
         <Box
           sx={{ mb: 1, flexGrow: 1, display: "flex", flexDirection: "column" }}
         >
-          <Typography variant="subtitle2" sx={{ mb: 1 }} color="common.black">
-            Neueste Elemente:
-          </Typography>
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              mb: 1,
+            }}
+          >
+            <Typography variant="subtitle2" color="common.black">
+              Neueste Elemente:
+              {(selectedCategories.length > 0 || selectedEbkps.length > 0) &&
+                ` (${filteredElements.length} gefiltert)`}
+            </Typography>
+
+            {(selectedCategories.length > 0 || selectedEbkps.length > 0) && (
+              <Button
+                size="small"
+                variant="text"
+                color="primary"
+                onClick={clearFilters}
+                sx={{ minWidth: 0, p: 0.5 }}
+              >
+                Filter löschen
+              </Button>
+            )}
+          </Box>
+
           <TableContainer
             sx={{
               overflow: "auto",
@@ -525,11 +690,14 @@ const MainPage = () => {
                 <TableRow>
                   <TableCell>Element ID</TableCell>
                   <TableCell>Typ</TableCell>
+                  <TableCell>Name</TableCell>
+                  <TableCell>Level</TableCell>
+                  <TableCell>Material</TableCell>
                   <TableCell>eBKP</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {currentElements.map((element) => (
+                {filteredElements.map((element) => (
                   <TableRow key={element._id}>
                     <TableCell>{element._id.substring(0, 6)}...</TableCell>
                     <TableCell>
@@ -537,6 +705,15 @@ const MainPage = () => {
                         element.element_type ||
                         element.ifc_class ||
                         "—"}
+                    </TableCell>
+                    <TableCell>{element.name || "—"}</TableCell>
+                    <TableCell>
+                      {element.level || element.properties?.level || "—"}
+                    </TableCell>
+                    <TableCell>
+                      {element.materials && element.materials.length > 0
+                        ? element.materials[0].name
+                        : "—"}
                     </TableCell>
                     <TableCell>
                       {element.classification?.id ||
@@ -640,101 +817,65 @@ const MainPage = () => {
             </Box>
 
             {/* Hochgeladene Dateien Section - Only show if there are files */}
-            {uploadedFiles.length > 0 && (
+            {costFileInfo.fileName && (
               <div
                 className="mb-4 mt-2 flex flex-col overflow-hidden"
-                style={{ minHeight: "200px" }}
+                style={{ minHeight: "150px" }}
               >
                 <Typography
                   variant="subtitle1"
                   className="font-bold mb-2"
                   color="primary"
                 >
-                  Hochgeladene Dateien
+                  Hochgeladene Datei
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
-                <div className="flex-grow flex flex-col overflow-hidden">
-                  <TableContainer
-                    sx={{
-                      flex: 1,
-                      overflow: "auto",
-                      maxHeight: "calc(100% - 40px)",
-                    }}
+                <Box
+                  sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}
+                >
+                  <InsertDriveFileIcon
+                    color="primary"
+                    fontSize="small"
+                    sx={{ mr: 0.5, fontSize: "1rem" }}
+                  />
+                  <Typography
+                    variant="body2"
+                    sx={{ wordBreak: "break-word", flexGrow: 1 }}
                   >
-                    <Table size="small" stickyHeader>
-                      <TableHead>
-                        <TableRow>
-                          <TableCell
-                            sx={{ padding: "6px 8px", fontWeight: "bold" }}
-                          >
-                            Dateiname
-                          </TableCell>
-                          <TableCell
-                            sx={{ padding: "6px 8px", fontWeight: "bold" }}
-                          >
-                            Datum
-                          </TableCell>
-                          <TableCell
-                            sx={{ padding: "6px 8px", fontWeight: "bold" }}
-                          >
-                            Status
-                          </TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {uploadedFiles.map((file, index) => (
-                          <TableRow key={index} hover>
-                            <TableCell
-                              sx={{ padding: "6px 8px", fontSize: "0.75rem" }}
-                            >
-                              <div className="flex items-center">
-                                <InsertDriveFileIcon
-                                  color="primary"
-                                  fontSize="small"
-                                  sx={{ mr: 1, fontSize: "1rem" }}
-                                />
-                                <span style={{ wordBreak: "break-word" }}>
-                                  {file.name}
-                                </span>
-                              </div>
-                            </TableCell>
-                            <TableCell
-                              sx={{ padding: "6px 8px", fontSize: "0.75rem" }}
-                            >
-                              {file.date}
-                            </TableCell>
-                            <TableCell
-                              sx={{ padding: "6px 8px", fontSize: "0.75rem" }}
-                            >
-                              <Chip
-                                label={file.status}
-                                color={
-                                  file.status === "Vorschau"
-                                    ? "warning"
-                                    : file.status === "Gelöscht"
-                                    ? "default"
-                                    : "success"
-                                }
-                                size="small"
-                                variant="outlined"
-                                sx={{ height: 20, fontSize: "0.7rem" }}
-                              />
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </div>
+                    {costFileInfo.fileName}
+                  </Typography>
+                </Box>
+                <Box
+                  sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}
+                >
+                  <Typography variant="caption" color="text.secondary">
+                    Datum:
+                  </Typography>
+                  <Typography variant="body2">{costFileInfo.date}</Typography>
+                </Box>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Status:
+                  </Typography>
+                  <Chip
+                    label={costFileInfo.status}
+                    color={
+                      costFileInfo.status === "Vorschau"
+                        ? "warning"
+                        : costFileInfo.status === "Gelöscht"
+                        ? "default"
+                        : "success"
+                    }
+                    size="small"
+                    variant="outlined"
+                    sx={{ height: 20, fontSize: "0.7rem" }}
+                  />
+                </Box>
               </div>
             )}
 
             {/* Fusszeile - Position at bottom when files aren't shown */}
-            <div
-              className={`flex flex-col mt-2 ${
-                uploadedFiles.length === 0 ? "mt-auto" : ""
-              }`}
-            >
+            <div className={`flex flex-col mt-auto`}>
               {/* Anleitung Section */}
               <div>
                 <Typography
@@ -783,24 +924,29 @@ const MainPage = () => {
                 mb: 6,
               }}
             >
-              <Typography variant="h2" className="text-5xl">
-                Kostendaten hochladen
-              </Typography>
-              <Button
-                variant="outlined"
-                color="primary"
-                size="medium"
-                startIcon={<DownloadIcon />}
-                onClick={handleTemplateDownload}
-              >
-                Kosten-Template herunterladen
-              </Button>
+              {!costFileInfo.fileName && (
+                <Typography variant="h2" className="text-5xl">
+                  Kostendaten hochladen
+                </Typography>
+              )}
+
+              {!costFileInfo.fileName && (
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  size="medium"
+                  startIcon={<DownloadIcon />}
+                  onClick={handleTemplateDownload}
+                >
+                  Kosten-Template herunterladen
+                </Button>
+              )}
             </Box>
 
             {/* Cost Uploader Component */}
             <div className="flex-grow flex flex-col h-full overflow-hidden">
               <CostUploader
-                onFileUploaded={handleFileUploaded}
+                onFileUploaded={handleCostFileUploaded}
                 totalElements={0}
                 totalCost={totalCostSum}
                 projectName={selectedProject}

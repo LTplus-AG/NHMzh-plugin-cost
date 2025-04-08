@@ -241,7 +241,46 @@ const server = http.createServer((req, res) => {
     // Try to get project cost data directly using project name
     (async () => {
       try {
-        // First find the project ID
+        // First ensure we have database connections
+        const { costDb, qtoDb } = await connectToMongoDB();
+
+        if (!qtoDb || !costDb) {
+          // If we couldn't get DB connections but other data is available, return what we can
+          if (elementsByProject[projectName]) {
+            // Return a simplified response with elements count but no cost data
+            const elements = Object.values(
+              elementsByProject[projectName]
+            ).flat();
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                elements_count: elements.length,
+                cost_data_count: 0,
+                total_from_cost_data: 0,
+                total_from_elements: 0,
+                updated_at: new Date().toISOString(),
+                created_at: new Date().toISOString(),
+                note: "Cost data is unavailable, but elements were loaded from cache",
+              })
+            );
+            return;
+          }
+
+          // If no data at all, return 404
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: "Project not found and database connection failed",
+              elements_count: 0,
+              cost_data_count: 0,
+              total_from_cost_data: 0,
+              total_from_elements: 0,
+            })
+          );
+          return;
+        }
+
+        // Now that we have DB connections, find the project
         const qtoProject = await qtoDb.collection("projects").findOne({
           name: { $regex: new RegExp(`^${projectName}$`, "i") },
         });
@@ -665,6 +704,31 @@ wss.on("connection", async (ws, req) => {
             })
           );
           return;
+        }
+
+        let costDb, qtoDb;
+        try {
+          // Ensure we have DB connections before proceeding
+          const dbs = await connectToMongoDB();
+          costDb = dbs.costDb;
+          qtoDb = dbs.qtoDb;
+          if (!costDb || !qtoDb) {
+            throw new Error("Failed to get database handles.");
+          }
+        } catch (dbError) {
+          console.error(
+            "Database connection error during delete_project_data:",
+            dbError
+          );
+          ws.send(
+            JSON.stringify({
+              type: "delete_project_data_response",
+              messageId,
+              status: "error",
+              message: `Database connection error: ${dbError.message}`,
+            })
+          );
+          return; // Stop if DB connection failed
         }
 
         console.log(
@@ -1148,7 +1212,7 @@ wss.on("connection", async (ws, req) => {
         }
 
         console.log(
-          `Received raw Excel data for project '${projectName}' with ${excelItems.length} items.`
+          `Received raw Excel data for project '${projectName}' with ${excelItems.length} items. Replace existing: ${replaceExisting}`
         );
 
         try {
@@ -1183,8 +1247,8 @@ wss.on("connection", async (ws, req) => {
             });
           }
 
-          // Delete existing costData if replaceExisting flag is true
           if (replaceExisting) {
+            // Delete existing costData if flag is true
             console.log(
               `Deleting existing costData for project ${projectName} before saving new data`
             );
@@ -1196,66 +1260,149 @@ wss.on("connection", async (ws, req) => {
             console.log(
               `Deleted ${deleteResult.deletedCount} existing costData entries`
             );
-          }
 
-          // Save all Excel items to costData collection
-          const costDataToSave = excelItems
-            .map((item, index) => {
-              // Skip items with unit_cost of 0
-              const unitCost = parseFloat(item.kennwert || 0) || 0;
-              if (unitCost <= 0) {
-                console.log(
-                  `Skipping Excel item with EBKP ${
-                    item.ebkp || ""
-                  } due to zero unit cost`
-                );
-                return null; // Return null for items to be filtered out
-              }
+            // --- INSERT LOGIC (when replaceExisting is true) ---
+            const costDataToSave = excelItems
+              .map((item, index) => {
+                // Skip items with unit_cost of 0
+                const unitCost = parseFloat(item.kennwert || 0) || 0;
+                if (unitCost <= 0) {
+                  console.log(
+                    `Skipping Excel item with EBKP ${
+                      item.ebkp || ""
+                    } due to zero unit cost`
+                  );
+                  return null; // Return null for items to be filtered out
+                }
 
-              // Return valid items as before
-              return {
-                _id: new ObjectId(),
-                project_id: projectId,
-                ebkp_code: item.ebkp || "",
-                category: item.bezeichnung || item.category || "",
-                level: item.level || "",
-                unit_cost: unitCost,
-                quantity: parseFloat(item.menge || 0) || 0,
-                total_cost: parseFloat(item.totalChf || item.chf || 0) || 0,
-                currency: "CHF",
-                metadata: {
-                  source: "excel-import",
-                  timestamp: new Date(),
-                  original_data: {
-                    einheit: item.einheit || "m²",
-                    kommentar: item.kommentar || "",
-                    excel_row: index + 1,
+                // Return valid items as before
+                return {
+                  _id: new ObjectId(),
+                  project_id: projectId,
+                  ebkp_code: item.ebkp || "",
+                  category: item.bezeichnung || item.category || "",
+                  level: item.level || "",
+                  unit_cost: unitCost,
+                  quantity: parseFloat(item.menge || 0) || 0,
+                  total_cost: parseFloat(item.totalChf || item.chf || 0) || 0,
+                  currency: "CHF",
+                  metadata: {
+                    source: "excel-import",
+                    timestamp: new Date(),
+                    original_data: {
+                      einheit: item.einheit || "m²",
+                      kommentar: item.kommentar || "",
+                      // excel_row: index + 1, // Row index isn't easily available here
+                    },
                   },
-                },
-                created_at: new Date(),
-                updated_at: new Date(),
-              };
-            })
-            .filter((item) => item !== null); // Filter out null items
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                };
+              })
+              .filter((item) => item !== null); // Filter out null items
 
-          // Save to database
-          const costDataResult = await costDb
-            .collection("costData")
-            .insertMany(costDataToSave);
-          console.log(
-            `Successfully saved ${costDataResult.insertedCount} Excel items to costData collection`
-          );
+            let insertedCount = 0;
+            if (costDataToSave.length > 0) {
+              const costDataResult = await costDb
+                .collection("costData")
+                .insertMany(costDataToSave);
+              insertedCount = costDataResult.insertedCount;
+              console.log(
+                `Successfully inserted ${insertedCount} Excel items into costData collection (replace mode)`
+              );
+            } else {
+              console.log("No valid Excel items to insert (replace mode).");
+            }
+            // Send success response for replace mode
+            ws.send(
+              JSON.stringify({
+                type: "save_excel_data_response",
+                messageId,
+                status: "success",
+                message: `Successfully replaced data with ${insertedCount} Excel items.`, // Updated message
+                insertedCount: insertedCount,
+              })
+            );
+          } else {
+            // --- UPDATE/UPSERT LOGIC (when replaceExisting is false) ---
+            console.log(`Upserting costData for project ${projectName}`);
+            const bulkOps = excelItems
+              .map((item) => {
+                // Skip items with zero unit cost
+                const unitCost = parseFloat(item.kennwert || 0) || 0;
+                const ebkpCode = item.ebkp || "";
+                if (unitCost <= 0 || !ebkpCode) {
+                  console.log(
+                    `Skipping Excel item with EBKP ${ebkpCode} due to zero unit cost or missing code`
+                  );
+                  return null;
+                }
 
-          // Send success response
-          ws.send(
-            JSON.stringify({
-              type: "save_excel_data_response",
-              messageId,
-              status: "success",
-              message: `Successfully saved ${costDataResult.insertedCount} Excel items.`,
-              insertedCount: costDataResult.insertedCount,
-            })
-          );
+                // Define the update document
+                const updateDoc = {
+                  project_id: projectId,
+                  ebkp_code: ebkpCode,
+                  category: item.bezeichnung || item.category || "",
+                  level: item.level || "",
+                  unit_cost: unitCost,
+                  quantity: parseFloat(item.menge || 0) || 0,
+                  total_cost: parseFloat(item.totalChf || item.chf || 0) || 0,
+                  currency: "CHF",
+                  metadata: {
+                    source: "excel-import",
+                    timestamp: new Date(),
+                    original_data: {
+                      einheit: item.einheit || "m²",
+                      kommentar: item.kommentar || "",
+                      // excel_row: index + 1, // Row index isn't easily available here
+                    },
+                  },
+                  updated_at: new Date(),
+                };
+
+                // Return the bulk operation object
+                return {
+                  updateOne: {
+                    filter: { project_id: projectId, ebkp_code: ebkpCode }, // Match by project and EBKP code
+                    update: {
+                      $set: updateDoc, // Set all fields
+                      $setOnInsert: { created_at: new Date() }, // Set created_at only on insert
+                    },
+                    upsert: true, // Insert if no match is found
+                  },
+                };
+              })
+              .filter((op) => op !== null); // Filter out skipped items
+
+            let upsertedCount = 0;
+            let modifiedCount = 0;
+            if (bulkOps.length > 0) {
+              const bulkResult = await costDb
+                .collection("costData")
+                .bulkWrite(bulkOps);
+              upsertedCount = bulkResult.upsertedCount;
+              modifiedCount = bulkResult.modifiedCount;
+              console.log(
+                `Bulk write completed: ${upsertedCount} inserted, ${modifiedCount} updated (update mode)`
+              );
+            } else {
+              console.log("No valid Excel items to upsert (update mode).");
+            }
+
+            // Send success response for update/upsert mode
+            ws.send(
+              JSON.stringify({
+                type: "save_excel_data_response",
+                messageId,
+                status: "success",
+                message: `Successfully updated/inserted ${
+                  upsertedCount + modifiedCount
+                } Excel items.`, // Updated message
+                insertedCount: upsertedCount, // Report how many new ones were added
+                updatedCount: modifiedCount, // Report how many were updated
+              })
+            );
+          }
         } catch (error) {
           console.error(
             `Error saving Excel data for project '${projectName}':`,
@@ -1271,7 +1418,6 @@ wss.on("connection", async (ws, req) => {
             })
           );
         }
-        return; // Ensure we don't fall through
       } else if (data.type === "ping") {
         console.log(`Received ping from client ${clientId}, sending pong`);
         ws.send(JSON.stringify({ type: "pong" }));

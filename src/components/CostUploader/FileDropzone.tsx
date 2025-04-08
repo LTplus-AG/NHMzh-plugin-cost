@@ -18,19 +18,21 @@ const FileDropzone = ({ onFileUploaded, setIsLoading }: FileDropzoneProps) => {
     async (file: File) => {
       if (!file) return;
 
-      console.log(`Processing new file: ${file.name}`);
+      console.log(`Processing new file: ${file.name}, Size: ${file.size}`);
       setIsLoading(true);
 
       try {
         const result = await parseExcelFile(file);
 
-        onFileUploaded({
-          file,
+        const metaFile: MetaFile = {
+          file: file,
           data: result.data,
           headers: result.headers,
           missingHeaders: result.missingHeaders,
           valid: result.valid,
-        });
+        };
+
+        onFileUploaded(metaFile);
       } catch (error) {
         console.error("Error processing file:", error);
       } finally {
