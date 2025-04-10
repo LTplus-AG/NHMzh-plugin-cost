@@ -107,6 +107,7 @@ interface KafkaContextProps {
     ebkpCode: string
   ) => Promise<ProjectElement[]>;
   getCachedProjectData: (projectName: string) => ProjectData | null;
+  backendUrl: string;
 }
 
 // Create the context with default values
@@ -127,6 +128,7 @@ const KafkaContext = createContext<KafkaContextProps>({
   getProjectElements: () => Promise.resolve([]),
   getElementsForEbkp: () => Promise.resolve([]),
   getCachedProjectData: () => null,
+  backendUrl: "",
 });
 
 // Custom hook to use the Kafka context
@@ -727,6 +729,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         getProjectElements,
         getElementsForEbkp,
         getCachedProjectData,
+        backendUrl,
       }}
     >
       {children}

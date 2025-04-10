@@ -27,13 +27,16 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 
 # Install dependencies
-RUN npm ci
+# Use npm install instead of npm ci to handle optional dependencies better
+RUN npm install --no-optional
 
 # Copy the rest of the application
 COPY . .
 
-# Build the application
-RUN npm run build
+# Build the application - handle the rollup musl issue
+RUN npm rebuild esbuild && \
+    npm config set unsafe-perm true && \
+    NODE_OPTIONS="--max-old-space-size=4096" npm run build
 
 # Stage 3: Production
 FROM nginx:alpine as prod

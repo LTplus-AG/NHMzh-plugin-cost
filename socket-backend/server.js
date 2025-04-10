@@ -10,10 +10,10 @@ const { ObjectId } = require("mongodb");
 const {
   connectToMongoDB,
   updateProjectCostSummary,
-  getAllElementsForProject,
   getCostDataForElement,
   saveCostData,
   saveCostDataBatch,
+  getElementEbkpCode,
 } = require("./mongodb");
 
 // Load environment variables
@@ -61,6 +61,13 @@ const unitCostsByEbkph = {};
 // Store IFC elements by EBKPH code
 const ifcElementsByEbkph = {};
 
+// Parse allowed CORS origins
+const allowedOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter((o) => o);
+console.log("Allowed CORS Origins:", allowedOrigins);
+
 // Track elements to prevent duplicates
 const processedElementIds = new Set();
 
@@ -73,6 +80,11 @@ let lastMatchTimestamp = null;
 const MATCH_CACHE_DURATION = parseInt(
   process.env.MATCH_CACHE_DURATION_MS || "300000"
 ); // Default 5 minutes
+
+// Add this near the top of the file, with other globals
+// Track elements already sent to Kafka to prevent duplicates
+// const kafkaSentElements = new Set();
+// const KAFKA_DEDUP_TIMEOUT = 60 * 60 * 1000; // 1 hour
 
 console.log("Starting WebSocket server with configuration:", {
   kafkaBroker: config.kafka.broker,
@@ -111,10 +123,56 @@ const server = http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
+  // --- CORS Handling --- START ---
+  const requestOrigin = req.headers.origin;
+  let originAllowed = false;
+
+  if (requestOrigin) {
+    if (allowedOrigins.includes(requestOrigin)) {
+      res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+      originAllowed = true;
+    } else {
+      // Optionally log disallowed origins
+      // console.warn(`CORS: Origin ${requestOrigin} not allowed.`);
+    }
+  } else if (!requestOrigin && req.method !== "OPTIONS") {
+    // Allow requests with no origin header (e.g., curl, server-to-server, redirects)
+    // Browsers typically always send Origin for cross-origin requests
+    originAllowed = true;
+  }
+
+  // Set common CORS headers only if origin is allowed or not applicable
+  if (originAllowed || req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, OPTIONS, PUT, DELETE, HEAD"
+    ); // Added common methods
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With"
+    ); // Added common headers
+  }
+  // --- CORS Handling --- END ---
+
   // Handle OPTIONS pre-flight requests
   if (req.method === "OPTIONS") {
-    res.writeHead(204);
+    if (originAllowed) {
+      res.writeHead(204); // OK, No Content
+    } else {
+      // If origin was present but not allowed
+      res.writeHead(403); // Forbidden
+    }
     res.end();
+    return;
+  }
+
+  // If origin was required, present, but not allowed, block the request
+  if (requestOrigin && !originAllowed) {
+    res.writeHead(403, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({ error: `CORS: Origin ${requestOrigin} is not allowed.` })
+    );
     return;
   }
 
@@ -198,28 +256,78 @@ const server = http.createServer((req, res) => {
     }
 
     console.log(
-      `Received request for project elements by name: ${projectName}`
+      `Received request for project elements (from cost DB) by name: ${projectName}`
     );
 
-    // Use the MongoDB helper to get elements by project name directly
-    getAllElementsForProject(projectName)
-      .then((elements) => {
+    // Fetch elements, trying costElements first, then falling back to qto.elements
+    (async () => {
+      let elements = [];
+      let sourceDb = "costElements"; // Track where we got the data from
+      try {
+        const { costDb, qtoDb } = await connectToMongoDB();
+
+        if (!costDb || !qtoDb) {
+          throw new Error("Failed to connect to necessary databases.");
+        }
+
+        // 1. Find the project ID using the project name (from qtoDb)
+        const qtoProject = await qtoDb.collection("projects").findOne({
+          name: { $regex: new RegExp(`^${projectName}$`, "i") },
+        });
+
+        if (!qtoProject) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: `Project ${projectName} not found in QTO DB`,
+            })
+          );
+          return;
+        }
+        const projectId = qtoProject._id;
         console.log(
-          `Retrieved ${elements.length} elements for project: ${projectName}`
+          `Found project ID: ${projectId} for project: ${projectName}`
         );
+
+        // 2. Try querying the costElements collection using the projectId
+        elements = await costDb
+          .collection("costElements")
+          .find({ project_id: projectId })
+          .toArray();
+
+        console.log(
+          `Attempt 1: Retrieved ${elements.length} elements from costElements for project: ${projectName}`
+        );
+
+        // 3. If no elements found in costElements, try qto.elements as fallback
+        if (elements.length === 0) {
+          console.log(
+            `No elements found in costElements, falling back to qto.elements`
+          );
+          sourceDb = "qto.elements";
+          elements = await qtoDb
+            .collection("elements")
+            .find({ project_id: projectId })
+            .toArray();
+          console.log(
+            `Attempt 2: Retrieved ${elements.length} elements from qto.elements for project: ${projectName}`
+          );
+        }
+
         res.writeHead(200, { "Content-Type": "application/json" });
+        // Return the elements found
         res.end(JSON.stringify(elements));
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error(
-          `Error getting elements for project ${projectName}:`,
+          `Error getting elements (from ${sourceDb}) for project ${projectName}:`,
           error
         );
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({ error: `Failed to get elements: ${error.message}` })
         );
-      });
+      }
+    })(); // Immediately invoke the async function
   }
   // Get project cost data (/project-cost/:projectName)
   else if (req.url.startsWith("/project-cost/")) {
@@ -645,6 +753,10 @@ const server = http.createServer((req, res) => {
           return;
         }
 
+        // Get filename from project metadata, if available
+        const filename = project.metadata?.filename || "";
+        console.log(`Using filename from project metadata: ${filename}`);
+
         // Get first element
         const element = await qtoDb.collection("elements").findOne({
           project_id: project._id,
@@ -664,16 +776,11 @@ const server = http.createServer((req, res) => {
         const enhancedElement = {
           ...element,
           project: projectName,
+          filename: filename, // Use filename from project metadata
           cost_unit: 100, // Sample value
           cost: 1000, // Sample value
-          is_structural:
-            element.properties?.structuralRole === "load_bearing" || false,
-          fire_rating: element.properties?.fireRating || "",
           element_id: element._id.toString(),
           id: element._id.toString(),
-          ebkph: element.properties?.classification?.id || "C1.1", // Sample fallback
-          category: element.category || element.properties?.category || "wall",
-          level: element.level || element.properties?.level || "Level 1",
         };
 
         // Send to Kafka
@@ -688,6 +795,7 @@ const server = http.createServer((req, res) => {
               : "Failed to send element to Kafka",
             elementId: element._id.toString(),
             project: projectName,
+            filename: filename,
           })
         );
       } catch (error) {
@@ -696,6 +804,24 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: error.message }));
       }
     })();
+  } else if (req.url === "/send-test-cost-batch") {
+    sendTestCostBatch()
+      .then((result) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            status: result ? "success" : "error",
+            message: result
+              ? "Test cost batch sent successfully"
+              : "Failed to send test cost batch",
+            timestamp: new Date().toISOString(),
+          })
+        );
+      })
+      .catch((error) => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: error.message }));
+      });
   } else {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
@@ -1251,8 +1377,25 @@ wss.on("connection", async (ws, req) => {
             const matchedResult = await saveCostDataBatch(
               matchedItems,
               projectName,
-              // Pass sendEnhancedElementToKafka as a callback
-              sendEnhancedElementToKafka
+              // Pass our new more efficient batch sender
+              async (elements) => {
+                // Get filename from project if available
+                let filename = "";
+                if (
+                  qtoProject &&
+                  qtoProject.metadata &&
+                  qtoProject.metadata.filename
+                ) {
+                  filename = qtoProject.metadata.filename;
+                }
+
+                // Use the new batch sending function
+                return await sendCostElementsToKafka(
+                  elements,
+                  projectName,
+                  filename
+                );
+              }
             );
             console.log(
               `Processed ${matchedItems.length} matched items for costElements collection`
@@ -1702,6 +1845,28 @@ async function run() {
                 );
 
                 if (elements.length > 0) {
+                  // Get project info to extract filename
+                  let filename = "";
+                  try {
+                    const project = await qtoDb.collection("projects").findOne({
+                      _id: new ObjectId(projectId),
+                    });
+                    if (
+                      project &&
+                      project.metadata &&
+                      project.metadata.filename
+                    ) {
+                      filename = project.metadata.filename;
+                      console.log(
+                        `Using filename from project metadata: ${filename}`
+                      );
+                    }
+                  } catch (err) {
+                    console.warn(
+                      `Unable to get filename from project metadata: ${err.message}`
+                    );
+                  }
+
                   // Update the project data in our in-memory storage
                   elementsByProject[projectName] = {};
 
@@ -1749,7 +1914,7 @@ async function run() {
                       const costUnit = costInfo.cost_unit || 0;
 
                       // Apply costs to all elements with this code
-                      elementsWithThisCode.forEach((element) => {
+                      elementsWithThisCode.forEach((element, index) => {
                         const area = parseFloat(element.quantity || 0);
                         const totalCost = costUnit * (area || 1);
 
@@ -1759,27 +1924,32 @@ async function run() {
                         element.cost_source = costInfo.filename;
                         element.cost_timestamp = costInfo.timestamp;
                         element.cost_match_method = bestMatch.method;
+                        element.sequence = index; // Add sequence number based on position in the array
 
                         // Update project total
                         projectTotalCost += totalCost;
                         elementsWithCost++;
 
                         // Send enhanced element to cost topic with proper format
-                        sendEnhancedElementToKafka({
-                          ...element,
-                          project: projectName,
-                          filename: element.filename || "unknown.ifc",
-                          is_structural:
-                            element.properties?.structuralRole ===
-                              "load_bearing" || false,
-                          fire_rating: element.properties?.fireRating || "",
-                          ebkph:
-                            element.properties?.classification?.id ||
-                            element.ebkph ||
-                            ebkpCode,
-                          cost_unit: costUnit,
-                          cost: totalCost,
-                        });
+                        sendEnhancedElementToKafka(
+                          {
+                            ...element,
+                            project: projectName,
+                            filename: filename || "unknown.ifc", // Use the filename from project metadata
+                            is_structural:
+                              element.properties?.structuralRole ===
+                                "load_bearing" || false,
+                            fire_rating: element.properties?.fireRating || "",
+                            ebkph:
+                              element.properties?.classification?.id ||
+                              element.ebkph ||
+                              ebkpCode,
+                            cost_unit: costUnit,
+                            cost: totalCost,
+                            sequence: index, // Explicitly set sequence
+                          },
+                          index
+                        ); // Pass sequence as second parameter
                       });
 
                       // Broadcast cost match notification
@@ -1838,10 +2008,42 @@ async function run() {
                 // Normalize EBKPH code
                 const ebkpCode = normalizeEbkpCode(elementData.ebkph);
 
+                // Ensure category contains IFC class
+                let ifcClass = "";
+                if (elementData.ifcClass) {
+                  ifcClass = elementData.ifcClass;
+                } else if (elementData.ifc_class) {
+                  ifcClass = elementData.ifc_class;
+                } else if (
+                  elementData.category &&
+                  elementData.category.toLowerCase().startsWith("ifc")
+                ) {
+                  ifcClass = elementData.category;
+                } else if (
+                  elementData.properties?.category &&
+                  elementData.properties.category
+                    .toLowerCase()
+                    .startsWith("ifc")
+                ) {
+                  ifcClass = elementData.properties.category;
+                } else if (
+                  elementData.properties?.type &&
+                  elementData.properties.type.toLowerCase().startsWith("ifc")
+                ) {
+                  ifcClass = elementData.properties.type;
+                }
+
+                // Set the category to IFC class if found
+                if (ifcClass) {
+                  elementData.category = ifcClass;
+                }
+
                 // Store by EBKPH code
                 if (!ifcElementsByEbkph[ebkpCode]) {
                   ifcElementsByEbkph[ebkpCode] = [];
                 }
+                // Add this element with its index as sequence number
+                elementData.sequence = ifcElementsByEbkph[ebkpCode].length; // Set sequence based on position in array
                 ifcElementsByEbkph[ebkpCode].push(elementData);
 
                 // Also store by project for easier retrieval
@@ -1852,13 +2054,16 @@ async function run() {
                 if (!elementsByProject[projectKey][ebkpCode]) {
                   elementsByProject[projectKey][ebkpCode] = [];
                 }
+                // Set sequence based on position in this project's array for this code
+                elementData.sequence =
+                  elementsByProject[projectKey][ebkpCode].length;
                 elementsByProject[projectKey][ebkpCode].push(elementData);
 
                 // Mark as processed to avoid duplicates
                 processedElementIds.add(elementId);
 
                 console.log(
-                  `Stored IFC element with EBKPH ${ebkpCode} (element ID: ${elementId})`
+                  `Stored IFC element with EBKPH ${ebkpCode} (element ID: ${elementId}, sequence: ${elementData.sequence}, category: ${elementData.category})`
                 );
 
                 // Save to file periodically
@@ -1913,11 +2118,14 @@ async function run() {
                   }
 
                   console.log(
-                    `MATCH FOUND (${bestMatch.method}): Added cost data to element with EBKPH ${elementData.ebkph} (normalized: ${normalizedCode}): unit cost = ${costUnit}, area = ${area}, total cost = ${enhancedElement.cost}`
+                    `MATCH FOUND (${bestMatch.method}): Added cost data to element with EBKPH ${elementData.ebkph} (normalized: ${normalizedCode}): unit cost = ${costUnit}, area = ${area}, total cost = ${enhancedElement.cost}, sequence = ${enhancedElement.sequence}, category: ${enhancedElement.category}`
                   );
 
                   // Send enhanced element to cost topic
-                  await sendEnhancedElementToKafka(enhancedElement);
+                  await sendEnhancedElementToKafka(
+                    enhancedElement,
+                    enhancedElement.sequence
+                  );
 
                   // Also notify clients about this match
                   broadcastCostMatch(bestMatch.code, costUnit, 1);
@@ -2001,7 +2209,7 @@ function sendTestMessage() {
 }
 
 // Send enhanced element with cost data to Kafka
-async function sendEnhancedElementToKafka(enhancedElement) {
+async function sendEnhancedElementToKafka(enhancedElement, sequence = 0) {
   try {
     // Make sure cost topic exists
     if (!costTopicReady) {
@@ -2016,16 +2224,42 @@ async function sendEnhancedElementToKafka(enhancedElement) {
       console.log("Cost producer connected to Kafka");
     }
 
+    // Get IFC class for category - ensure it's populated from the right property
+    // Check multiple possible sources for the IFC class
+    let ifcClass = "";
+    if (enhancedElement.ifcClass) {
+      ifcClass = enhancedElement.ifcClass;
+    } else if (enhancedElement.ifc_class) {
+      ifcClass = enhancedElement.ifc_class;
+    } else if (
+      enhancedElement.category &&
+      enhancedElement.category.toLowerCase().startsWith("ifc")
+    ) {
+      ifcClass = enhancedElement.category;
+    } else if (
+      enhancedElement.properties?.category &&
+      enhancedElement.properties.category.toLowerCase().startsWith("ifc")
+    ) {
+      ifcClass = enhancedElement.properties.category;
+    } else if (
+      enhancedElement.properties?.type &&
+      enhancedElement.properties.type.toLowerCase().startsWith("ifc")
+    ) {
+      ifcClass = enhancedElement.properties.type;
+    }
+
     // Format the message according to the required structure
+    // Keep only id and cost
     const costDataItem = {
       id: enhancedElement.element_id || enhancedElement.id,
-      category: enhancedElement.category || "",
-      level: enhancedElement.level || "",
-      isStructural: enhancedElement.is_structural || false,
-      fireRating: enhancedElement.fire_rating || "",
-      ebkph: enhancedElement.ebkph || "",
       cost: enhancedElement.cost || 0,
-      costUnit: enhancedElement.cost_unit || 0,
+      // category: ifcClass || enhancedElement.category || "unknown",
+      // level: enhancedElement.level || "",
+      // is_structural: enhancedElement.is_structural || false,
+      // fire_rating: enhancedElement.fire_rating || "",
+      // ebkph: enhancedElement.ebkph || "",
+      cost_unit: enhancedElement.cost_unit || 0,
+      // sequence: typeof sequence === "number" ? sequence : 0, // Ensure sequence is a number
     };
 
     const costMessage = {
@@ -2033,22 +2267,25 @@ async function sendEnhancedElementToKafka(enhancedElement) {
       filename: enhancedElement.filename || "",
       timestamp: new Date().toISOString(),
       data: [costDataItem],
-      fileID: `${enhancedElement.project || ""}/${
-        enhancedElement.filename || ""
-      }`,
+      // fileID is excluded from JSON but still used as the Kafka message key
     };
+
+    // Create fileID for use as message key but not included in message body
+    const fileID = `${enhancedElement.project || ""}/${
+      enhancedElement.filename || ""
+    }`;
 
     // Log what we're sending to help with debugging
     console.log("Sending cost message to Kafka topic:", {
       project: costMessage.project,
-      filename: costMessage.filename,
       dataCount: costMessage.data.length,
       sampleItem: {
         id: costDataItem.id,
-        category: costDataItem.category,
-        ebkph: costDataItem.ebkph,
         cost: costDataItem.cost,
-        costUnit: costDataItem.costUnit,
+        // category: costDataItem.category,
+        // ebkph: costDataItem.ebkph,
+        cost_unit: costDataItem.cost_unit,
+        // sequence: costDataItem.sequence, // Add sequence to logging
       },
     });
 
@@ -2058,10 +2295,7 @@ async function sendEnhancedElementToKafka(enhancedElement) {
       messages: [
         {
           value: JSON.stringify(costMessage),
-          key:
-            costMessage.project ||
-            enhancedElement.element_id ||
-            enhancedElement.id,
+          key: fileID,
         },
       ],
     });
@@ -2125,76 +2359,81 @@ server.listen(config.websocket.port, async () => {
 
   try {
     // Load elements from MongoDB immediately
-    console.log("Loading elements from MongoDB...");
-    const db = await connectToMongoDB();
+    console.log("Loading initial elements from QTO DB after server start...");
+    // Call the new function to load elements right after connecting DB
+    await loadInitialElementsFromQtoDb();
 
-    if (!db || !db.qtoDb) {
-      console.error("Failed to connect to MongoDB or get qtoDb reference");
-    } else {
-      // Query all elements
-      const elements = await db.qtoDb.collection("elements").find({}).toArray();
-      console.log(`Found ${elements.length} elements in MongoDB`);
-
-      // Clear existing data
-      Object.keys(ifcElementsByEbkph).forEach(
-        (key) => delete ifcElementsByEbkph[key]
-      );
-      processedElementIds.clear();
-
-      // Process elements
-      let processedCount = 0;
-      for (const element of elements) {
-        // Try to extract eBKP code from various locations
-        let ebkpCode = null;
-
-        // Check in properties.classification.id first (most common MongoDB format)
-        if (element.properties?.classification?.id) {
-          ebkpCode = element.properties.classification.id;
-        }
-        // Then try properties.ebkph
-        else if (element.properties?.ebkph) {
-          ebkpCode = element.properties.ebkph;
-        }
-        // Finally, check root level properties
-        else if (element.ebkph) {
-          ebkpCode = element.ebkph;
-        } else if (element.ebkp_code) {
-          ebkpCode = element.ebkp_code;
-        }
-
-        if (ebkpCode) {
-          // Normalize code for consistent matching
-          const normalizedCode = normalizeEbkpCode(ebkpCode);
-
-          // Store element by normalized code
-          if (!ifcElementsByEbkph[normalizedCode]) {
-            ifcElementsByEbkph[normalizedCode] = [];
-          }
-
-          // Get quantity from root level
-          const quantity = element.quantity || 0;
-
-          // Store element with quantity as area
-          ifcElementsByEbkph[normalizedCode].push({
-            ...element,
-            area: quantity, // Use quantity as area
-            quantity: quantity, // Keep original quantity
-          });
-          processedCount++;
-
-          // Mark as processed to avoid duplicates
-          processedElementIds.add(element._id.toString());
-        }
-      }
-
-      console.log(
-        `Successfully loaded ${processedCount} elements from MongoDB with eBKP codes`
-      );
-      console.log(`Available eBKP codes:`, Object.keys(ifcElementsByEbkph));
-
-      // Print QTO element codes summary
-      // await printAllQtoElementCodes(); // Function not defined
-    }
+    // ---- REMOVED OLD LOADING LOGIC ----
+    // console.log("Loading elements from MongoDB...");
+    // const db = await connectToMongoDB();
+    //
+    // if (!db || !db.qtoDb) {
+    //   console.error("Failed to connect to MongoDB or get qtoDb reference");
+    // } else {
+    // Query all elements
+    // const elements = await db.qtoDb.collection("elements").find({}).toArray();
+    // console.log(`Found ${elements.length} elements in MongoDB`);
+    //
+    // // Clear existing data
+    // Object.keys(ifcElementsByEbkph).forEach(
+    //   (key) => delete ifcElementsByEbkph[key]
+    // );
+    // processedElementIds.clear();
+    //
+    // // Process elements
+    // let processedCount = 0;
+    // for (const element of elements) {
+    //   // Try to extract eBKP code from various locations
+    //   let ebkpCode = null;
+    //
+    //   // Check in properties.classification.id first (most common MongoDB format)
+    //   if (element.properties?.classification?.id) {
+    //     ebkpCode = element.properties.classification.id;
+    //   }
+    //   // Then try properties.ebkph
+    //   else if (element.properties?.ebkph) {
+    //     ebkpCode = element.properties.ebkph;
+    //   }
+    //   // Finally, check root level properties
+    //   else if (element.ebkph) {
+    //     ebkpCode = element.ebkph;
+    //   } else if (element.ebkp_code) {
+    //     ebkpCode = element.ebkp_code;
+    //   }
+    //
+    //   if (ebkpCode) {
+    //     // Normalize code for consistent matching
+    //     const normalizedCode = normalizeEbkpCode(ebkpCode);
+    //
+    //     // Store element by normalized code
+    //     if (!ifcElementsByEbkph[normalizedCode]) {
+    //       ifcElementsByEbkph[normalizedCode] = [];
+    //     }
+    //
+    //     // Get quantity from root level
+    //     const quantity = element.quantity || 0;
+    //
+    //     // Store element with quantity as area
+    //     ifcElementsByEbkph[normalizedCode].push({
+    //       ...element,
+    //       area: quantity, // Use quantity as area
+    //       quantity: quantity, // Keep original quantity
+    //     });
+    //     processedCount++;
+    //
+    //     // Mark as processed to avoid duplicates
+    //     processedElementIds.add(element._id.toString());
+    //   }
+    // }
+    //
+    // console.log(
+    //   `Successfully loaded ${processedCount} elements from MongoDB with eBKP codes`
+    // );
+    // console.log(`Available eBKP codes:`, Object.keys(ifcElementsByEbkph));
+    //
+    // // Print QTO element codes summary
+    // // await printAllQtoElementCodes(); // Function not defined
+    // }
   } catch (error) {
     console.error("Error loading elements from MongoDB:", error);
   }
@@ -2482,4 +2721,364 @@ async function sendTestCostMessage() {
   }
 
   return result;
+}
+
+// Modify the sendBatchElementsToKafka function to use batch processing instead of individual messages
+async function sendBatchElementsToKafka(elements, project, filename) {
+  try {
+    if (!elements || elements.length === 0) {
+      console.log("No elements to send to Kafka");
+      return false;
+    }
+
+    console.log(
+      `Preparing to send batch of ${elements.length} elements to Kafka`
+    );
+
+    // Make sure cost topic exists
+    if (!costTopicReady) {
+      console.log(`Ensuring cost topic exists: ${config.kafka.costTopic}`);
+      costTopicReady = await ensureTopicExists(config.kafka.costTopic);
+    }
+
+    // Make sure cost producer is connected
+    if (!costProducer.isConnected) {
+      console.log("Connecting cost producer to Kafka...");
+      await costProducer.connect();
+      console.log("Cost producer connected to Kafka");
+    }
+
+    // Group elements by project and filename for efficient batching
+    const elementsByKey = {};
+
+    // Process and group elements
+    for (let i = 0; i < elements.length; i++) {
+      const element = elements[i];
+
+      // Add project and filename if not present
+      const elementProject = element.project || project;
+      const elementFilename = element.filename || filename;
+
+      // Create a key for grouping
+      const key = `${elementProject}/${elementFilename}`;
+
+      if (!elementsByKey[key]) {
+        elementsByKey[key] = [];
+      }
+
+      // Get IFC class for category
+      let ifcClass = "";
+      if (element.ifcClass) {
+        ifcClass = element.ifcClass;
+      } else if (element.ifc_class) {
+        ifcClass = element.ifc_class;
+      } else if (
+        element.category &&
+        element.category.toLowerCase().startsWith("ifc")
+      ) {
+        ifcClass = element.category;
+      } else if (
+        element.properties?.category &&
+        element.properties.category.toLowerCase().startsWith("ifc")
+      ) {
+        ifcClass = element.properties.category;
+      } else if (
+        element.properties?.type &&
+        element.properties.type.toLowerCase().startsWith("ifc")
+      ) {
+        ifcClass = element.properties.type;
+      }
+
+      // Create cost data item with sequence number
+      const costDataItem = {
+        id: element.element_id || element.id,
+        cost: element.cost || 0,
+        // category: ifcClass || element.category || "unknown",
+        // level: element.level || "",
+        // is_structural: element.is_structural || false,
+        // fire_rating: element.fire_rating || "",
+        // ebkph: element.ebkph || "",
+        cost_unit: element.cost_unit || 0,
+        // sequence: i, // Use array index as sequence
+      };
+
+      // Add to the appropriate batch
+      elementsByKey[key].push(costDataItem);
+    }
+
+    // Now process each batch
+    let totalSent = 0;
+    const batchPromises = [];
+
+    for (const [key, items] of Object.entries(elementsByKey)) {
+      // Extract project and filename from key
+      const [batchProject, batchFilename] = key.split("/");
+
+      // Create message for this batch
+      const costMessage = {
+        project: batchProject,
+        filename: batchFilename,
+        timestamp: new Date().toISOString(),
+        data: items,
+      };
+
+      // Send batch to Kafka (don't await here - collect promises)
+      batchPromises.push(
+        costProducer
+          .send({
+            topic: config.kafka.costTopic,
+            messages: [
+              {
+                value: JSON.stringify(costMessage),
+                key: key,
+              },
+            ],
+          })
+          .then(() => {
+            totalSent += items.length;
+            console.log(`Sent batch of ${items.length} elements for ${key}`);
+            return items.length;
+          })
+          .catch((error) => {
+            console.error(`Error sending batch for ${key}:`, error);
+            return 0;
+          })
+      );
+    }
+
+    // Wait for all batches to complete
+    const results = await Promise.allSettled(batchPromises);
+    const successCount = results.reduce(
+      (sum, result) => sum + (result.status === "fulfilled" ? result.value : 0),
+      0
+    );
+
+    console.log(
+      `Successfully sent ${successCount} of ${elements.length} elements to Kafka`
+    );
+    return successCount > 0;
+  } catch (error) {
+    console.error("Error sending batch elements to Kafka:", error);
+    return false;
+  }
+}
+
+// Add a new function to handle sending multiple elements from the save_cost_batch_full
+// This is called from the saveCostDataBatch function in mongodb.js
+async function sendCostElementsToKafka(elements, projectName, filename) {
+  // Don't load this if we have no elements
+  if (!elements || elements.length === 0) {
+    console.log("No elements to send to Kafka");
+    return { success: false, count: 0 };
+  }
+
+  // Group elements by EBKP code for better organization
+  const elementsByEbkph = {};
+  elements.forEach((element, index) => {
+    const ebkpCode =
+      element.ebkph || element.properties?.classification?.id || "unknown";
+    if (!elementsByEbkph[ebkpCode]) {
+      elementsByEbkph[ebkpCode] = [];
+    }
+    elementsByEbkph[ebkpCode].push({
+      ...element,
+      project: projectName,
+      filename: filename,
+      sequence: index, // Set sequence based on overall position
+    });
+  });
+
+  // Process in batches of 100 elements max to avoid too large messages
+  const BATCH_SIZE = 100;
+  const batches = [];
+  let currentBatch = [];
+  let totalProcessed = 0;
+
+  // Create batches from all element groups
+  Object.values(elementsByEbkph).forEach((elementsGroup) => {
+    elementsGroup.forEach((element) => {
+      if (currentBatch.length >= BATCH_SIZE) {
+        batches.push([...currentBatch]);
+        currentBatch = [];
+      }
+      currentBatch.push(element);
+      totalProcessed++;
+    });
+  });
+
+  // Add the final batch if it has elements
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  console.log(
+    `Created ${batches.length} batches from ${totalProcessed} elements for project ${projectName}`
+  );
+
+  // Process each batch with the batch sender
+  let successCount = 0;
+  for (let i = 0; i < batches.length; i++) {
+    try {
+      const batchResult = await sendBatchElementsToKafka(
+        batches[i],
+        projectName,
+        filename
+      );
+      if (batchResult) {
+        successCount += batches[i].length;
+      }
+
+      // Add a small delay between large batches to avoid overwhelming Kafka
+      if (batches.length > 5 && i < batches.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    } catch (error) {
+      console.error(
+        `Error processing batch ${i + 1}/${batches.length}:`,
+        error
+      );
+    }
+  }
+
+  return {
+    success: successCount > 0,
+    count: successCount,
+  };
+}
+
+// Add back the test batch function with our new approach
+async function sendTestCostBatch() {
+  const project = "Test Project";
+  const filename = "test.ifc";
+
+  // Create a batch of test elements
+  const testElements = [
+    {
+      element_id: `test_element_1`,
+      project: project,
+      filename: filename,
+      category: "ifcwall",
+      level: "Level_1",
+      is_structural: true,
+      fire_rating: "F30",
+      ebkph: "C2.1",
+      cost: 100.0,
+      cost_unit: 10.0,
+    },
+    {
+      element_id: `test_element_2`,
+      project: project,
+      filename: filename,
+      category: "ifcwall",
+      level: "Level_1",
+      is_structural: false,
+      fire_rating: "",
+      ebkph: "C2.1",
+      cost: 150.0,
+      cost_unit: 15.0,
+    },
+    {
+      element_id: `test_element_3`,
+      project: project,
+      filename: filename,
+      category: "ifcslab",
+      level: "Level_2",
+      is_structural: true,
+      fire_rating: "F60",
+      ebkph: "C4.1",
+      cost: 200.0,
+      cost_unit: 20.0,
+    },
+  ];
+
+  console.log(
+    `Sending test batch of ${testElements.length} cost elements to Kafka...`
+  );
+  const result = await sendBatchElementsToKafka(
+    testElements,
+    project,
+    filename
+  );
+
+  if (result) {
+    console.log("Test cost batch sent successfully");
+  } else {
+    console.error("Failed to send test cost batch");
+  }
+
+  return result;
+}
+
+// NEW function to load initial elements
+async function loadInitialElementsFromQtoDb() {
+  console.log("Attempting to load initial elements from QTO DB...");
+  try {
+    const { qtoDb } = await connectToMongoDB(); // Ensure connection
+    if (!qtoDb) {
+      console.warn(
+        "QTO DB connection not available, cannot load initial elements."
+      );
+      return;
+    }
+
+    // Clear existing in-memory data before loading
+    processedElementIds.clear();
+    Object.keys(ifcElementsByEbkph).forEach(
+      (key) => delete ifcElementsByEbkph[key]
+    );
+    Object.keys(elementsByProject).forEach(
+      (key) => delete elementsByProject[key]
+    );
+
+    const elements = await qtoDb.collection("elements").find({}).toArray();
+    console.log(
+      `Found ${elements.length} elements in qto.elements collection.`
+    );
+
+    let processedCount = 0;
+    elements.forEach((element) => {
+      const elementId = element._id.toString();
+      const ebkpCode = getElementEbkpCode(element); // Use imported helper
+
+      if (ebkpCode) {
+        const normalizedCode = normalizeEbkpCode(ebkpCode); // Normalize code
+        const projectKey = element.project_name || element.project || "unknown"; // Determine project key
+
+        // Store by normalized EBKPH code (global)
+        if (!ifcElementsByEbkph[normalizedCode]) {
+          ifcElementsByEbkph[normalizedCode] = [];
+        }
+        element.sequence = ifcElementsByEbkph[normalizedCode].length;
+        ifcElementsByEbkph[normalizedCode].push(element);
+
+        // Also store by project and normalized EBKPH code
+        if (!elementsByProject[projectKey]) {
+          elementsByProject[projectKey] = {};
+        }
+        if (!elementsByProject[projectKey][normalizedCode]) {
+          elementsByProject[projectKey][normalizedCode] = [];
+        }
+        element.projectSequence =
+          elementsByProject[projectKey][normalizedCode].length; // Add project-specific sequence too
+        elementsByProject[projectKey][normalizedCode].push(element);
+
+        processedCount++;
+      }
+      // Always add element ID to processed set, even if no EBKP code
+      processedElementIds.add(elementId);
+    });
+
+    console.log(
+      `Successfully loaded and processed ${processedCount} elements with EBKP codes into memory.`
+    );
+    console.log(`Total elements tracked (by ID): ${processedElementIds.size}.`);
+    console.log(
+      `Total EBKP codes in cache: ${Object.keys(ifcElementsByEbkph).length}.`
+    );
+    console.log(
+      `Total projects in cache: ${Object.keys(elementsByProject).length}.`
+    );
+  } catch (error) {
+    console.error("Error loading initial elements from QTO DB:", error);
+  }
 }

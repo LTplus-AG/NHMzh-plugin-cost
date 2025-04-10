@@ -146,7 +146,7 @@ const MainPage = () => {
   const [totalCostSum, setTotalCostSum] = useState<number>(0);
   const [isLoadingCost, setIsLoadingCost] = useState<boolean>(false);
 
-  useKafka();
+  const { backendUrl } = useKafka();
 
   const [loadingElements, setLoadingElements] = useState(false);
   const [projectDetails, setProjectDetails] =
@@ -175,25 +175,16 @@ const MainPage = () => {
 
     const attemptFetch = async (): Promise<number> => {
       try {
-        let apiBaseUrl = "";
-
-        // Use environment variable for WebSocket URL, provide a default if not set
-        const wsUrl =
-          import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
-
-        const wsProtocol = wsUrl.startsWith("wss:") ? "https:" : "http:";
-        const httpUrl = wsUrl.replace(/^ws(s)?:\/\//, "");
-        apiBaseUrl = `${wsProtocol}//${httpUrl}`;
-
-        const encodedProjectName = encodeURIComponent(projectName);
-        const costApiUrl = `${apiBaseUrl}/project-cost/${encodedProjectName}`;
-
-        // Avoid logging the same request URL multiple times during retries
-        if (retryCount === 0) {
-          console.log(`Fetching cost data from: ${costApiUrl}`);
+        // Use backendUrl from KafkaContext for cost data
+        if (!backendUrl) {
+          console.error("Backend URL not available from context");
+          return 0; // Or handle appropriately
         }
 
-        const response = await fetch(costApiUrl);
+        // Attempt to fetch cost data
+        const response = await fetch(
+          `${backendUrl}/project-cost/${encodeURIComponent(projectName)}`
+        );
 
         if (!response.ok) {
           // Parse the error details (if any)
@@ -351,26 +342,26 @@ const MainPage = () => {
     try {
       const encodedProjectName = encodeURIComponent(projectName);
 
-      // Use environment variable for WebSocket URL, provide a default if not set
-      const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8001";
-      let apiBaseUrl = "";
-      let backendAvailable = false;
-      try {
-        const wsProtocol = wsUrl.startsWith("wss:") ? "https:" : "http:";
-        const httpUrl = wsUrl.replace(/^ws(s)?:\/\//, "");
-        apiBaseUrl = `${wsProtocol}//${httpUrl}`;
-        console.log(`API base URL: ${apiBaseUrl}`);
+      // Use backendUrl from KafkaContext
+      if (!backendUrl) {
+        console.error("Backend URL not available from context");
+        setLoadingElements(false);
+        return [];
+      }
 
-        // Try health endpoint first (common for WebSocket servers)
+      let backendAvailable = false;
+
+      try {
+        // Try health endpoint first
         try {
-          const healthResponse = await fetch(`${apiBaseUrl}/health`, {
+          const healthResponse = await fetch(`${backendUrl}/health`, {
             method: "HEAD",
           });
           backendAvailable = healthResponse.ok;
           console.log(`Health check: ${healthResponse.status}`);
         } catch {
           // If health endpoint fails, try the root path
-          const rootResponse = await fetch(apiBaseUrl, { method: "HEAD" });
+          const rootResponse = await fetch(backendUrl, { method: "HEAD" });
           backendAvailable = rootResponse.ok;
           console.log(`Root path check: ${rootResponse.status}`);
         }
@@ -391,8 +382,8 @@ const MainPage = () => {
         return [];
       }
 
-      // Using the project name directly in the API call
-      const apiUrl = `${apiBaseUrl}/project-elements/${encodedProjectName}`;
+      // Try with the path parameter format directly
+      const apiUrl = `${backendUrl}/project-elements/${encodedProjectName}`;
       console.log(`Fetching from API URL: ${apiUrl}`);
       const response = await fetch(apiUrl);
       console.log(`API response status: ${response.status}`);
@@ -502,23 +493,28 @@ const MainPage = () => {
       });
   };
 
-  // Load project data on component mount
+  // Load project data on component mount and when backendUrl becomes available
   useEffect(() => {
-    // Load data for the initially selected project, but only once on mount
-    if (selectedProject) {
+    // Only run if we have a selected project AND the backendUrl is ready
+    if (selectedProject && backendUrl) {
       setLoadingElements(true);
-      // Initial data load when the page first opens
+      console.log(
+        `MainPage: Backend URL ready (${backendUrl}), fetching initial data...`
+      ); // Add log
+      // Initial data load when the page first opens or backendUrl is ready
       Promise.all([
         fetchElementsForProject(selectedProject),
         fetchProjectCostData(selectedProject),
       ])
-        .catch(() => {})
+        .catch((error) => {
+          console.error("Error during initial data fetch:", error); // Add error log
+        })
         .finally(() => {
           setLoadingElements(false);
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array to ensure this only runs once on mount
+  }, [selectedProject, backendUrl]); // Add backendUrl dependency
 
   // Add a refresh button function for cost data
   const refreshCostData = () => {
@@ -734,13 +730,13 @@ const MainPage = () => {
     <Box
       sx={{
         padding: "0",
-        height: "100vh",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        height: "100%",
       }}
     >
-      <div className="w-full flex h-full overflow-hidden">
+      <Box className="w-full flex" sx={{ flexGrow: 1, overflow: "hidden" }}>
         {/* Sidebar - fixed, no scroll */}
         <div className="w-1/4 min-w-[300px] max-w-[400px] px-8 pt-4 pb-0 bg-light text-primary flex flex-col h-full overflow-y-auto">
           {/* Header und Inhalte */}
@@ -914,8 +910,8 @@ const MainPage = () => {
         </div>
 
         {/* Hauptbereich - single scrollbar */}
-        <div className="flex-1 w-3/4 flex flex-col h-full overflow-hidden">
-          <div className="flex-grow px-10 pt-4 pb-10 flex flex-col h-full overflow-y-auto">
+        <div className="flex-1 w-3/4 flex flex-col overflow-y-auto">
+          <div className="flex-grow px-10 pt-4 pb-10 flex flex-col">
             <Box
               sx={{
                 display: "flex",
@@ -944,7 +940,7 @@ const MainPage = () => {
             </Box>
 
             {/* Cost Uploader Component */}
-            <div className="flex-grow flex flex-col h-full overflow-hidden">
+            <div className="flex-grow flex flex-col">
               <CostUploader
                 onFileUploaded={handleCostFileUploaded}
                 totalElements={0}
@@ -993,7 +989,7 @@ const MainPage = () => {
             </div>
           </div>
         </div>
-      </div>
+      </Box>
     </Box>
   );
 };

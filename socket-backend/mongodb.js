@@ -30,6 +30,23 @@ let connectionRetries = 0;
 const MAX_RETRIES = parseInt(process.env.MONGODB_CONNECT_MAX_RETRIES || "5");
 
 /**
+// Track elements we've already sent to Kafka to prevent duplicates
+const processedKafkaElements = new Set();
+
+// Clean up processedKafkaElements Set periodically to prevent memory leaks
+const KAFKA_ELEMENT_CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
+setInterval(() => {
+  const beforeSize = processedKafkaElements.size;
+  if (beforeSize > 0) {
+    console.log(
+      `Cleaning up Kafka processed elements cache. Before: ${beforeSize} elements`
+    );
+    processedKafkaElements.clear();
+    console.log(`Kafka processed elements cache cleared.`);
+  }
+}, KAFKA_ELEMENT_CLEANUP_INTERVAL);
+
+/**
  * Connect to MongoDB and initialize database references
  */
 async function connectToMongoDB() {
@@ -990,24 +1007,12 @@ async function saveCostDataBatch(
       return code.trim().replace(/\s+/g, "").toLowerCase();
     };
 
-    // Create both normalized and original versions in the map
+    // Dump information about all elements to help with debugging
+    console.log(
+      `Dumping element information for ${existingElements.length} elements:`
+    );
     existingElements.forEach((element) => {
-      // Check all possible locations for eBKP code
-      let ebkpCode = null;
-
-      // 1. Check properties.ebkph
-      if (element.properties?.ebkph) {
-        ebkpCode = element.properties.ebkph;
-      }
-      // 2. Check properties.classification.id
-      else if (element.properties?.classification?.id) {
-        ebkpCode = element.properties.classification.id;
-      }
-      // 3. Check ebkp_code directly on element
-      else if (element.ebkp_code) {
-        ebkpCode = element.ebkp_code;
-      }
-
+      const ebkpCode = getElementEbkpCode(element);
       if (ebkpCode) {
         // Store with original code
         ebkpToElementMap[ebkpCode] = element._id;
@@ -1016,26 +1021,38 @@ async function saveCostDataBatch(
         if (normalizedCode && normalizedCode !== ebkpCode) {
           ebkpToElementMap[normalizedCode] = element._id;
         }
-        console.log(`Mapped element ${element._id} to eBKP code ${ebkpCode}`);
+
+        // Also, manually add expected codes for common cases
+        // Store C1.1 also as C1 for partial matching
+        if (ebkpCode.match(/^([A-Z]\d+)\.\d+$/)) {
+          const majorCode = ebkpCode.match(/^([A-Z]\d+)\.\d+$/)[1];
+          ebkpToElementMap[majorCode] = element._id;
+          console.log(
+            `Added major code ${majorCode} for element ${element._id} with full code ${ebkpCode}`
+          );
+        }
       }
     });
 
     console.log(
       `Created mapping for ${
         Object.keys(ebkpToElementMap).length
-      } elements by eBKP code`
+      } elements by eBKP code, map:`,
+      ebkpToElementMap
     );
 
     // Create a map to store QTO elements by EBKP code for efficient lookup
     const ebkpToElementsMap = {};
 
+    // Set to track elements we've sent to Kafka during this batch operation
+    const sentToKafkaInThisBatch = new Set();
+    // Array to collect elements for batch Kafka sending
+    const elementsForKafka = [];
+
     // Build the map of QTO elements by EBKP code
     existingElements.forEach((element) => {
-      // Get EBKP code from any possible location
-      let ebkpCode =
-        element.properties?.ebkph ||
-        element.properties?.classification?.id ||
-        element.ebkp_code;
+      // Get EBKP code using our helper
+      const ebkpCode = getElementEbkpCode(element);
 
       if (ebkpCode) {
         if (!ebkpToElementsMap[ebkpCode]) {
@@ -1050,6 +1067,15 @@ async function saveCostDataBatch(
             ebkpToElementsMap[normalizedCode] = [];
           }
           ebkpToElementsMap[normalizedCode].push(element);
+        }
+
+        // Add major code mapping (e.g., C1.1 -> C1)
+        if (ebkpCode.match(/^([A-Z]\d+)\.\d+$/)) {
+          const majorCode = ebkpCode.match(/^([A-Z]\d+)\.\d+$/)[1];
+          if (!ebkpToElementsMap[majorCode]) {
+            ebkpToElementsMap[majorCode] = [];
+          }
+          ebkpToElementsMap[majorCode].push(element);
         }
       }
     });
@@ -1092,10 +1118,10 @@ async function saveCostDataBatch(
 
       // Find matching QTO element
       let elementId = null;
-      if (normalizedCode && ebkpToElementMap[normalizedCode]) {
-        elementId = ebkpToElementMap[normalizedCode];
-      } else if (ebkpToElementMap[ebkpCode]) {
-        elementId = ebkpToElementMap[ebkpCode];
+      if (normalizedCode && ebkpToElementsMap[normalizedCode]) {
+        elementId = ebkpToElementsMap[normalizedCode];
+      } else if (ebkpToElementsMap[ebkpCode]) {
+        elementId = ebkpToElementsMap[ebkpCode];
       }
 
       if (elementId) {
@@ -1136,7 +1162,7 @@ async function saveCostDataBatch(
 
         if (qtoElements.length > 0) {
           // Process each QTO element but store only one entry per element
-          qtoElements.forEach((qtoElement) => {
+          qtoElements.forEach((qtoElement, index) => {
             const qtoElementId = qtoElement._id.toString();
 
             // Check if we've already processed this QTO element
@@ -1158,35 +1184,33 @@ async function saveCostDataBatch(
                 timestamp: new Date(),
               });
 
-              // Send Kafka message for this element if callback provided
-              if (sendKafkaMessage && typeof sendKafkaMessage === "function") {
-                // Prepare element with cost data for Kafka
-                const elementWithCost = {
-                  ...qtoElement,
-                  project: projectName,
-                  cost_unit: kennwert,
-                  cost: elementTotalCost,
-                  ebkph: ebkpCode,
-                  is_structural:
-                    qtoElement.properties?.structuralRole === "load_bearing" ||
-                    false,
-                  fire_rating: qtoElement.properties?.fireRating || "",
-                  category:
-                    qtoElement.category ||
-                    qtoElement.properties?.category ||
-                    "",
-                  level: qtoElement.level || qtoElement.properties?.level || "",
-                  element_id: qtoElementId,
-                  id: qtoElementId,
-                };
+              // Prepare element with cost data for Kafka batch sending
+              const elementWithCost = {
+                ...qtoElement,
+                project: projectName,
+                cost_unit: kennwert,
+                cost: elementTotalCost,
+                ebkph: ebkpCode,
+                is_structural:
+                  qtoElement.properties?.structuralRole === "load_bearing" ||
+                  false,
+                fire_rating: qtoElement.properties?.fireRating || "",
+                category:
+                  qtoElement.category || qtoElement.properties?.category || "",
+                level: qtoElement.level || qtoElement.properties?.level || "",
+                element_id: qtoElementId,
+                id: qtoElementId,
+                sequence: elementsForKafka.length, // Set sequence based on overall position
+              };
 
-                // Send to Kafka
-                sendKafkaMessage(elementWithCost).catch((err) => {
-                  console.error(
-                    `Error sending Kafka message for element ${qtoElementId}:`,
-                    err
-                  );
-                });
+              // Add to collection for batch sending
+              elementsForKafka.push(elementWithCost);
+
+              // Check if we've already sent this element to avoid duplicates in logging
+              const elementKafkaKey = `${qtoElementId}_${projectName}_${ebkpCode}`;
+              if (!sentToKafkaInThisBatch.has(elementKafkaKey)) {
+                // Mark as processed to avoid duplicates
+                sentToKafkaInThisBatch.add(elementKafkaKey);
               }
             }
           });
@@ -1279,38 +1303,128 @@ async function saveCostDataBatch(
     );
 
     // Insert new cost elements
+    let insertResult = { insertedCount: 0 };
     if (costElementsToSave.length > 0) {
       console.log(`Inserting ${costElementsToSave.length} cost elements`);
-      const costElementsResult = await costDatabase
+      insertResult = await costDatabase
         .collection("costElements")
         .insertMany(costElementsToSave);
       console.log(
-        `Successfully inserted ${costElementsResult.insertedCount} cost elements`
+        `Successfully inserted ${insertResult.insertedCount} cost elements`
       );
     }
 
     // Update QTO elements with cost data
     if (elementOps.length > 0) {
-      console.log(`Updating ${elementOps.length} QTO elements with cost data`);
-      const elemsResult = await qtoDatabase
-        .collection("elements")
-        .bulkWrite(elementOps);
       console.log(
-        `Elements result: ${elemsResult.matchedCount} matched, ${elemsResult.modifiedCount} modified, ${elemsResult.upsertedCount} upserted`
+        `NOT updating ${elementOps.length} QTO elements with cost data - we don't have write permission to QTO database`
       );
+      console.log(
+        `This is expected behavior - cost data is stored only in cost database`
+      );
+
+      // Skip the actual update of QTO elements
+      // const elemsResult = await qtoDatabase
+      //   .collection("elements")
+      //   .bulkWrite(elementOps);
+      // console.log(
+      //   `Elements result: ${elemsResult.matchedCount} matched, ${elemsResult.modifiedCount} modified, ${elemsResult.upsertedCount} upserted`
+      // );
     }
 
     // Update project summary
     await updateProjectCostSummary(projectId);
+
+    // Send all collected elements to Kafka in batch if callback provided
+    let kafkaResult = { success: false, count: 0 };
+    if (
+      sendKafkaMessage &&
+      typeof sendKafkaMessage === "function" &&
+      elementsForKafka.length > 0
+    ) {
+      console.log(
+        `Sending ${elementsForKafka.length} elements to Kafka in batches`
+      );
+
+      try {
+        // Use the provided callback function to send elements in batch
+        kafkaResult = await sendKafkaMessage(elementsForKafka);
+        console.log(`Kafka batch send result: ${JSON.stringify(kafkaResult)}`);
+      } catch (kafkaError) {
+        console.error("Error sending elements to Kafka:", kafkaError);
+      }
+    }
+
     return {
       modifiedCount: elementOps.length,
-      insertedCount: costElementsToSave.length,
+      insertedCount: insertResult.insertedCount,
       projectId: projectId,
+      kafkaSent: kafkaResult?.count || 0,
     };
   } catch (error) {
     console.error("Error saving cost data batch:", error);
     throw error;
   }
+}
+
+// Create a more lenient way of extracting EBKP from an element
+function getElementEbkpCode(element) {
+  let ebkpCode = null;
+
+  // Log the element structure to debug what's available
+  console.log(
+    `DEBUG: Element structure for ID ${element._id}:`,
+    JSON.stringify(
+      {
+        direct_props: {
+          ebkp_code: element.ebkp_code,
+          ebkph: element.ebkph,
+          classification: element.classification,
+        },
+        nested_props: {
+          classification: element.properties?.classification,
+          ebkph: element.properties?.ebkph,
+        },
+      },
+      null,
+      2
+    )
+  );
+
+  // Check all possible locations for EBKP code (in order of preference)
+  // 1. Check properties.classification.id
+  if (element.properties?.classification?.id) {
+    ebkpCode = element.properties.classification.id;
+  }
+  // 2. Check properties.ebkph
+  else if (element.properties?.ebkph) {
+    ebkpCode = element.properties.ebkph;
+  }
+  // 3. Check direct classification.id
+  else if (element.classification?.id) {
+    ebkpCode = element.classification.id;
+  }
+  // 4. Check direct ebkph
+  else if (element.ebkph) {
+    ebkpCode = element.ebkph;
+  }
+  // 5. Check direct ebkp_code
+  else if (element.ebkp_code) {
+    ebkpCode = element.ebkp_code;
+  }
+  // 6. Check id if it looks like an EBKP code
+  else if (element.id && /^[A-Za-z]\d+(\.\d+)*$/.test(element.id)) {
+    ebkpCode = element.id;
+  }
+
+  // If we found a code, log it
+  if (ebkpCode) {
+    console.log(`Found EBKP code ${ebkpCode} for element ${element._id}`);
+  } else {
+    console.log(`No EBKP code found for element ${element._id}`);
+  }
+
+  return ebkpCode;
 }
 
 module.exports = {
@@ -1325,5 +1439,6 @@ module.exports = {
   saveCostDataBatch,
   getCostElementsByProject,
   getCostElementsByEbkpCode,
+  getElementEbkpCode,
   ObjectId,
 };
