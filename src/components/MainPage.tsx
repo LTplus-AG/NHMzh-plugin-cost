@@ -20,7 +20,7 @@ import {
   CircularProgress,
   SelectChangeEvent,
 } from "@mui/material";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import CostUploader from "./CostUploader/index";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -81,22 +81,14 @@ interface MongoElement {
   updated_at: string;
 }
 
-// Project data with real name mapping
-interface ProjectDetails {
+// Project data with real name mapping - CHANGED: Now fetched from API
+interface Project {
   id: string;
   name: string;
-  elements?: MongoElement[];
+  // elements?: MongoElement[]; // We load elements separately based on selected project
 }
 
-// Define a type for project cost summary data
-interface ProjectCostSummary {
-  created_at: string;
-  elements_count: number;
-  cost_data_count: number;
-  total_from_cost_data: number;
-  total_from_elements: number;
-  updated_at: string;
-}
+// REMOVED: Unused ProjectCostSummary interface
 
 const MainPage = () => {
   const Instructions = [
@@ -116,41 +108,28 @@ const MainPage = () => {
     },
   ];
 
-  const projectDetailsMap: Record<string, ProjectDetails> = {
-    "Recyclingzentrum Juch-Areal": {
-      id: "67e391836c096bf72bc23d97",
-      name: "Recyclingzentrum Juch-Areal",
-    },
-    "Gesamterneuerung Stadthausanlage": {
-      id: "67e392836c096bf72bc23d98",
-      name: "Gesamterneuerung Stadthausanlage",
-    },
-    "Amtshaus Walche": {
-      id: "67e393836c096bf72bc23d99",
-      name: "Amtshaus Walche",
-    },
-    "Gemeinschaftszentrum Wipkingen": {
-      id: "67e394836c096bf72bc23d9a",
-      name: "Gemeinschaftszentrum Wipkingen",
-    },
-  };
+  // REMOVED: Hardcoded projectDetailsMap
 
-  const [selectedProject, setSelectedProject] = useState(
-    Object.keys(projectDetailsMap)[0]
-  );
+  // State for projects fetched from API
+  const [projectsList, setProjectsList] = useState<Project[]>([]);
+  const [loadingProjects, setLoadingProjects] = useState(true);
+  const [selectedProject, setSelectedProject] = useState<string>(""); // Initialize as empty string
+
   const [costFileInfo, setCostFileInfo] = useState<CostFileInfo>({
     fileName: null,
     date: null,
     status: null,
   });
-  const [totalCostSum, setTotalCostSum] = useState<number>(0);
-  const [isLoadingCost, setIsLoadingCost] = useState<boolean>(false);
+
+  // NEW State: Store cost data from the uploaded file
+  const [uploadedCostData, setUploadedCostData] = useState<CostItem[] | null>(
+    null
+  );
 
   const { backendUrl } = useKafka();
 
   const [loadingElements, setLoadingElements] = useState(false);
-  const [projectDetails, setProjectDetails] =
-    useState<Record<string, ProjectDetails>>(projectDetailsMap);
+  // REMOVED: State for projectDetails (now just projectsList)
 
   const [currentElements, setCurrentElements] = useState<MongoElement[]>([]);
   const [elementsByEbkp, setElementsByEbkp] = useState<Record<string, number>>(
@@ -164,139 +143,20 @@ const MainPage = () => {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedEbkps, setSelectedEbkps] = useState<string[]>([]);
 
-  const fetchProjectCostData = async (projectName: string) => {
-    setIsLoadingCost(true);
-    let retryCount = 0;
-    const maxRetries = 2; // Reduce from 3 to 2 retries to minimize noise
-    const initialBackoff = 500; // 500ms
-
-    // Create a local flag to track if we've already logged the main error
-    let errorLogged = false;
-
-    const attemptFetch = async (): Promise<number> => {
-      try {
-        // Use backendUrl from KafkaContext for cost data
-        if (!backendUrl) {
-          console.error("Backend URL not available from context");
-          return 0; // Or handle appropriately
-        }
-
-        // Attempt to fetch cost data
-        const response = await fetch(
-          `${backendUrl}/project-cost/${encodeURIComponent(projectName)}`
-        );
-
-        if (!response.ok) {
-          // Parse the error details (if any)
-          let errorDetails = "";
-          try {
-            const errorText = await response.text();
-            const errorJson = JSON.parse(errorText);
-            errorDetails = errorJson.error || errorText;
-
-            // Log the main error only once, not on every retry
-            if (!errorLogged) {
-              console.error(`Backend API error: ${errorDetails}`);
-              errorLogged = true;
-            }
-          } catch {
-            // Parse error - just use a default message
-            errorDetails = "Unknown error";
-          }
-
-          // If we've hit the max retries, return default value
-          if (retryCount >= maxRetries) {
-            if (!errorLogged) {
-              console.error(
-                `Max retries exceeded for project cost data: ${errorDetails}`
-              );
-            }
-            return 0;
-          }
-
-          // Otherwise retry with exponential backoff (less verbose logging)
-          retryCount++;
-          const backoff = initialBackoff * Math.pow(2, retryCount - 1);
-          console.log(
-            `Retrying cost data fetch (attempt ${retryCount}/${maxRetries})`
-          );
-
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-          return attemptFetch();
-        }
-
-        const costSummary: ProjectCostSummary = await response.json();
-
-        if (costSummary && costSummary.total_from_elements !== undefined) {
-          return costSummary.total_from_elements;
-        } else if (
-          costSummary &&
-          costSummary.total_from_cost_data !== undefined
-        ) {
-          return costSummary.total_from_cost_data;
-        }
-
-        return 0;
-      } catch (error) {
-        // Only log the first occurrence of an error to reduce noise
-        if (!errorLogged) {
-          console.error("Error fetching project cost data:", error);
-          errorLogged = true;
-        }
-
-        // If we've hit the max retries, return default value
-        if (retryCount >= maxRetries) {
-          return 0;
-        }
-
-        // Otherwise retry with exponential backoff
-        retryCount++;
-        const backoff = initialBackoff * Math.pow(2, retryCount - 1);
-        console.log(
-          `Retrying cost data fetch (attempt ${retryCount}/${maxRetries})`
-        );
-
-        await new Promise((resolve) => setTimeout(resolve, backoff));
-        return attemptFetch();
-      }
-    };
-
-    try {
-      const totalCost = await attemptFetch();
-      setTotalCostSum(totalCost);
-    } catch (error) {
-      // Final fallback - only log once at the end of all retries
-      if (!errorLogged) {
-        console.error("Failed to fetch cost data after all retries:", error);
-      }
-      setTotalCostSum(0); // Set to zero as a fallback
-    } finally {
-      setIsLoadingCost(false);
-    }
-  };
-
   const handleCostFileUploaded = useCallback(
     (
       fileName: string | null,
       date?: string,
       status?: string,
-      costData?: CostItem[],
+      // Expect the raw data structure from CostUploader
+      costData?: CostItem[] | { data: CostItem[] } | null,
       isUpdate?: boolean
     ) => {
       if (status === "Gelöscht" || !fileName) {
-        fetchProjectCostData(selectedProject);
         setCostFileInfo({ fileName: null, date: null, status: null });
-        setTotalCostSum(0);
+        setUploadedCostData(null); // Clear cost data on removal
         console.log("Cost file info reset.");
         return;
-      }
-
-      let calculatedTotal = 0;
-      if (costData && costData.length > 0) {
-        calculatedTotal = costData.reduce((sum, item) => {
-          return sum + (item.totalChf || 0);
-        }, 0);
-        setTotalCostSum(calculatedTotal);
       }
 
       const newStatus = isUpdate ? "Erfolgreich" : status || "Vorschau";
@@ -308,23 +168,24 @@ const MainPage = () => {
         status: newStatus,
       });
 
-      console.log(`Cost file info updated: ${fileName}, Status: ${newStatus}`);
+      // Extract the array of CostItems
+      const dataArray = costData
+        ? Array.isArray(costData)
+          ? costData
+          : costData.data
+        : null;
+      setUploadedCostData(dataArray);
 
-      if (newStatus === "Erfolgreich" || newStatus === "Gespeichert") {
-        setTimeout(() => {
-          fetchProjectCostData(selectedProject);
-        }, 1000);
-      }
+      console.log(
+        `Cost file info updated: ${fileName}, Status: ${newStatus}, Items: ${
+          dataArray?.length ?? 0
+        }`
+      );
     },
-    [selectedProject]
+    []
   );
 
-  const formatCurrency = (amount: number): string => {
-    return amount.toLocaleString("de-CH", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    });
-  };
+  // REMOVED: Unused formatCurrency function
 
   const handleTemplateDownload = () => {
     const templateUrl = `/templates/241212_Kosten-Template.xlsx`;
@@ -336,198 +197,146 @@ const MainPage = () => {
     document.body.removeChild(link);
   };
 
-  const fetchElementsForProject = async (projectName: string) => {
-    setLoadingElements(true);
-
-    try {
-      const encodedProjectName = encodeURIComponent(projectName);
-
-      // Use backendUrl from KafkaContext
-      if (!backendUrl) {
-        console.error("Backend URL not available from context");
+  // Fetch elements for the selected project name
+  const fetchElementsForProject = useCallback(
+    async (projectName: string | null) => {
+      // Do nothing if projectName is null or empty
+      if (!projectName) {
+        setCurrentElements([]);
+        setElementsByCategory({});
+        setElementsByEbkp({});
         setLoadingElements(false);
         return [];
       }
 
-      let backendAvailable = false;
+      setLoadingElements(true);
 
       try {
-        // Try health endpoint first
-        try {
-          const healthResponse = await fetch(`${backendUrl}/health`, {
-            method: "HEAD",
+        const encodedProjectName = encodeURIComponent(projectName);
+
+        if (!backendUrl) {
+          console.error("Backend URL not available from context");
+          setLoadingElements(false);
+          return [];
+        }
+
+        // Simplified health check - assume available or let fetch fail
+        const apiUrl = `${backendUrl}/project-elements/${encodedProjectName}`;
+        console.log(`Fetching elements from API URL: ${apiUrl}`);
+        const response = await fetch(apiUrl);
+        console.log(`API response status: ${response.status}`);
+
+        if (!response.ok) {
+          throw new Error(
+            `Failed to fetch elements: ${response.statusText} (${response.status})`
+          );
+        }
+
+        const data = await response.json();
+        const elements = Array.isArray(data) ? data : data.elements || [];
+
+        if (elements && elements.length > 0) {
+          setCurrentElements(elements);
+
+          const categoryCounts: Record<string, number> = {};
+          const ebkpCounts: Record<string, number> = {};
+
+          elements.forEach((element: MongoElement) => {
+            const category =
+              element.ifc_class || element.properties?.category || "Unknown";
+            categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+
+            const ebkpCode =
+              element.classification?.id ||
+              element.properties?.ebkph ||
+              "Unknown";
+            ebkpCounts[ebkpCode] = (ebkpCounts[ebkpCode] || 0) + 1;
           });
-          backendAvailable = healthResponse.ok;
-          console.log(`Health check: ${healthResponse.status}`);
-        } catch {
-          // If health endpoint fails, try the root path
-          const rootResponse = await fetch(backendUrl, { method: "HEAD" });
-          backendAvailable = rootResponse.ok;
-          console.log(`Root path check: ${rootResponse.status}`);
+
+          setElementsByCategory(categoryCounts);
+          setElementsByEbkp(ebkpCounts);
+          return elements;
+        } else {
+          setCurrentElements([]);
+          setElementsByCategory({});
+          setElementsByEbkp({});
+          return [];
         }
       } catch (error) {
-        console.warn("Backend server appears to be unavailable:", error);
-        backendAvailable = false;
-      }
-
-      if (!backendAvailable) {
-        console.warn("Backend server unavailable, skipping API call");
-        setLoadingElements(false);
-
-        // Instead of using mock data, return empty data
+        console.error("Error fetching project elements:", error);
         setCurrentElements([]);
         setElementsByCategory({});
         setElementsByEbkp({});
-
         return [];
-      }
-
-      // Try with the path parameter format directly
-      const apiUrl = `${backendUrl}/project-elements/${encodedProjectName}`;
-      console.log(`Fetching from API URL: ${apiUrl}`);
-      const response = await fetch(apiUrl);
-      console.log(`API response status: ${response.status}`);
-
-      // Also fetch cost summary for this project to update the total cost
-      await fetchProjectCostData(projectName);
-
-      // Check if response is ok
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch elements: ${response.statusText} (${response.status})`
-        );
-      }
-
-      // Parse response text
-      const text = await response.text();
-      if (!text || text.trim() === "") {
+      } finally {
         setLoadingElements(false);
-        return [];
       }
+    },
+    [backendUrl] // Depend only on backendUrl
+  );
 
-      // Try to parse JSON
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        setLoadingElements(false);
-        return [];
-      }
-
-      // Format for processing - make sure we have the expected structure
-      // The response is usually an array of elements directly
-      const elements = Array.isArray(data) ? data : data.elements || [];
-
-      // Process the elements to extract stats
-      if (elements && elements.length > 0) {
-        // Update current elements
-        setCurrentElements(elements);
-
-        // Count elements by category and eBKP code
-        const categoryCounts: Record<string, number> = {};
-        const ebkpCounts: Record<string, number> = {};
-
-        elements.forEach((element: MongoElement) => {
-          // Count by category - from ifc_class if available
-          const category =
-            element.ifc_class || element.properties?.category || "Unknown";
-          categoryCounts[category] = (categoryCounts[category] || 0) + 1;
-
-          // Count by eBKP code - prioritize classification.id
-          const ebkpCode =
-            element.classification?.id ||
-            element.properties?.ebkph ||
-            "Unknown";
-          ebkpCounts[ebkpCode] = (ebkpCounts[ebkpCode] || 0) + 1;
-        });
-
-        setElementsByCategory(categoryCounts);
-        setElementsByEbkp(ebkpCounts);
-
-        // Store project details if we have a project ID in the elements
-        if (elements[0]?.project_id) {
-          const projectId = elements[0].project_id;
-          setProjectDetails((prev) => ({
-            ...prev,
-            [projectName]: {
-              ...prev[projectName],
-              id: projectId,
-              elements: elements,
-            },
-          }));
+  // Fetch the list of projects when the component mounts or backendUrl changes
+  useEffect(() => {
+    if (backendUrl) {
+      const fetchProjects = async () => {
+        setLoadingProjects(true);
+        try {
+          const response = await fetch(`${backendUrl}/projects`);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const projects: Project[] = await response.json();
+          setProjectsList(projects);
+          // Set the first project as selected *only if* no project is currently selected
+          // and the fetched list is not empty.
+          if (projects.length > 0 && !selectedProject) {
+            setSelectedProject(projects[0].name);
+            console.log(`Default project set to: ${projects[0].name}`); // Log default set
+          }
+        } catch (error) {
+          console.error("Failed to fetch projects:", error);
+          setProjectsList([]); // Reset to empty on error
+        } finally {
+          setLoadingProjects(false);
         }
+      };
 
-        // Finish loading
-        setLoadingElements(false);
-
-        // Return the elements
-        return elements;
-      } else {
-        // No elements found
-        setCurrentElements([]);
-        setElementsByCategory({});
-        setElementsByEbkp({});
-        setLoadingElements(false);
-        return [];
-      }
-    } catch {
-      setLoadingElements(false);
-      return [];
+      fetchProjects();
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendUrl]); // <-- DEPEND ONLY ON backendUrl
+
+  // Fetch elements when the selected project changes (and is valid)
+  useEffect(() => {
+    // Only fetch if selectedProject has a valid value (not empty string)
+    if (selectedProject) {
+      console.log(
+        `Selected project changed to: ${selectedProject}, fetching elements...`
+      );
+      fetchElementsForProject(selectedProject);
+    } else {
+      // Clear elements if project is deselected or becomes invalid
+      setCurrentElements([]);
+      setElementsByCategory({});
+      setElementsByEbkp({});
+      console.log("Selected project is empty, cleared elements.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject]); // Depend only on selectedProject (fetchElementsForProject is stable due to useCallback)
 
   // Define the handler for project change
   const handleProjectChange = (event: SelectChangeEvent<string>) => {
-    const newProject = event.target.value;
-    setSelectedProject(newProject);
-
-    // When project changes, fetch both elements and cost data for the new project
-    setLoadingElements(true);
-    Promise.all([
-      fetchElementsForProject(newProject),
-      fetchProjectCostData(newProject),
-    ])
-      .catch(() => {})
-      .finally(() => {
-        setLoadingElements(false);
-      });
+    const newProjectName = event.target.value;
+    setSelectedProject(newProjectName); // This will trigger the useEffect above to fetch elements
   };
 
-  // Load project data on component mount and when backendUrl becomes available
-  useEffect(() => {
-    // Only run if we have a selected project AND the backendUrl is ready
-    if (selectedProject && backendUrl) {
-      setLoadingElements(true);
-      console.log(
-        `MainPage: Backend URL ready (${backendUrl}), fetching initial data...`
-      ); // Add log
-      // Initial data load when the page first opens or backendUrl is ready
-      Promise.all([
-        fetchElementsForProject(selectedProject),
-        fetchProjectCostData(selectedProject),
-      ])
-        .catch((error) => {
-          console.error("Error during initial data fetch:", error); // Add error log
-        })
-        .finally(() => {
-          setLoadingElements(false);
-        });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProject, backendUrl]); // Add backendUrl dependency
-
-  // Add a refresh button function for cost data
-  const refreshCostData = () => {
-    fetchProjectCostData(selectedProject);
-  };
+  // REMOVED: Previous useEffect for initial data load (now handled by project list fetch)
 
   // Function to toggle category filter
   const toggleCategoryFilter = (category: string) => {
-    // If clicking an already selected category, just deselect it
     if (selectedCategories.includes(category)) {
       setSelectedCategories((prev) => prev.filter((c) => c !== category));
     } else {
-      // When selecting a category, clear eBKP filters and set the new category
       setSelectedEbkps([]);
       setSelectedCategories((prev) =>
         prev.includes(category)
@@ -539,11 +348,9 @@ const MainPage = () => {
 
   // Function to toggle eBKP filter
   const toggleEbkpFilter = (ebkp: string) => {
-    // If clicking an already selected eBKP, just deselect it
     if (selectedEbkps.includes(ebkp)) {
       setSelectedEbkps((prev) => prev.filter((e) => e !== ebkp));
     } else {
-      // When selecting an eBKP, clear category filters and set the new eBKP
       setSelectedCategories([]);
       setSelectedEbkps((prev) =>
         prev.includes(ebkp) ? prev.filter((e) => e !== ebkp) : [...prev, ebkp]
@@ -569,7 +376,6 @@ const MainPage = () => {
       const ebkp =
         element.classification?.id || element.properties?.ebkph || "Unknown";
 
-      // Either match by category OR match by eBKP (since they're now mutually exclusive)
       if (selectedCategories.length > 0) {
         return selectedCategories.includes(category);
       } else if (selectedEbkps.length > 0) {
@@ -580,9 +386,36 @@ const MainPage = () => {
     });
   };
 
+  // --- Cost Calculation (moved from CostUploader) ---
+  const calculateItemChf = useCallback((item: CostItem): number => {
+    let itemTotal = 0;
+    if (item.area !== undefined && item.kennwert !== undefined) {
+      itemTotal = item.area * item.kennwert;
+    } else if (item.totalChf !== undefined) {
+      itemTotal = item.totalChf;
+    } else if (item.menge !== undefined && item.kennwert !== undefined) {
+      itemTotal = item.menge * item.kennwert;
+    }
+    if (item.children && item.children.length > 0) {
+      return item.children.reduce(
+        (sum, child) => sum + calculateItemChf(child),
+        0
+      );
+    }
+    return itemTotal;
+  }, []);
+
+  const calculatedTotalCost = useMemo(() => {
+    if (!uploadedCostData) return 0;
+    return uploadedCostData.reduce(
+      (sum, item) => sum + calculateItemChf(item),
+      0
+    );
+  }, [uploadedCostData, calculateItemChf]);
+
   // Function to render element statistics
   const renderElementStats = () => {
-    if (loadingElements) {
+    if (loadingElements || loadingProjects) {
       return (
         <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
           <CircularProgress size={24} />
@@ -677,7 +510,7 @@ const MainPage = () => {
           <TableContainer
             sx={{
               overflow: "auto",
-              height: "calc(100vh - 500px)",
+              height: "calc(100vh - 500px)", // Adjust height as needed
               minHeight: "200px",
             }}
           >
@@ -752,71 +585,70 @@ const MainPage = () => {
                 <Select
                   id="select-project"
                   size="small"
-                  value={selectedProject}
+                  value={selectedProject || ""} // Ensure value is not null/undefined
                   onChange={handleProjectChange}
                   labelId="select-project"
+                  disabled={loadingProjects} // Disable while loading
                 >
-                  {Object.keys(projectDetails).map((projectName) => (
-                    <MenuItem key={projectName} value={projectName}>
-                      {projectName}
+                  {loadingProjects && (
+                    <MenuItem value="" disabled>
+                      <CircularProgress size={20} sx={{ mr: 1 }} />
+                      Lade Projekte...
                     </MenuItem>
-                  ))}
+                  )}
+                  {!loadingProjects && projectsList.length === 0 && (
+                    <MenuItem value="" disabled>
+                      Keine Projekte gefunden
+                    </MenuItem>
+                  )}
+                  {!loadingProjects &&
+                    projectsList.map((project) => (
+                      <MenuItem key={project.id} value={project.name}>
+                        {project.name}
+                      </MenuItem>
+                    ))}
                 </Select>
               </FormControl>
             </div>
 
-            {/* Total Cost Sum Box */}
-            <Box
-              sx={{
-                p: 2,
-                mt: 2,
-                mb: 2,
-                background: "linear-gradient(to right top, #F1D900, #fff176)",
-                borderRadius: 1,
-                textAlign: "center",
-                position: "relative",
-              }}
-            >
-              {isLoadingCost && (
-                <CircularProgress
-                  size={16}
-                  sx={{
-                    position: "absolute",
-                    top: 5,
-                    right: 5,
-                    color: "#666",
-                  }}
-                />
-              )}
-              <Typography
-                variant="h4"
-                component="p"
-                color="common.black"
-                fontWeight="bold"
+            {/* NEW: Calculated Total Cost Box */}
+            {costFileInfo.fileName && calculatedTotalCost > 0 && (
+              <Box
+                sx={{
+                  mt: 3, // Margin top
+                  mb: 2, // Margin bottom
+                  p: 2,
+                  background: "linear-gradient(to right top, #F1D900, #fff176)",
+                  borderRadius: "4px",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "center",
+                  minHeight: "60px",
+                  boxShadow: 1,
+                }}
               >
-                {formatCurrency(totalCostSum)}
                 <Typography
-                  component="span"
-                  variant="h6"
-                  sx={{ ml: 1, opacity: 0.7, fontWeight: "normal" }}
+                  variant="h5"
+                  component="p"
+                  color="common.black"
+                  fontWeight="bold"
                 >
-                  CHF
+                  CHF{" "}
+                  {calculatedTotalCost.toLocaleString("de-CH", {
+                    maximumFractionDigits: 0,
+                  })}
                 </Typography>
-              </Typography>
-              <Typography
-                variant="caption"
-                sx={{ mt: 0.5, display: "block", cursor: "pointer" }}
-                onClick={refreshCostData}
-              >
-                Aktualisiert: {new Date().toLocaleTimeString()}
-              </Typography>
-            </Box>
+                <Typography variant="caption" color="text.secondary">
+                  Gesamtkosten (Berechnet)
+                </Typography>
+              </Box>
+            )}
 
-            {/* Hochgeladene Dateien Section - Only show if there are files */}
+            {/* Uploaded File Info */}
             {costFileInfo.fileName && (
               <div
                 className="mb-4 mt-2 flex flex-col overflow-hidden"
-                style={{ minHeight: "150px" }}
+                style={{ minHeight: "auto" }}
               >
                 <Typography
                   variant="subtitle1"
@@ -943,8 +775,8 @@ const MainPage = () => {
             <div className="flex-grow flex flex-col">
               <CostUploader
                 onFileUploaded={handleCostFileUploaded}
-                totalElements={0}
-                totalCost={totalCostSum}
+                totalElements={currentElements.length}
+                calculatedTotalCost={calculatedTotalCost}
                 projectName={selectedProject}
                 elementsComponent={
                   <Box
@@ -972,7 +804,7 @@ const MainPage = () => {
                         size="small"
                         startIcon={<RefreshIcon />}
                         onClick={() => fetchElementsForProject(selectedProject)}
-                        disabled={loadingElements}
+                        disabled={loadingElements || loadingProjects}
                         variant="outlined"
                         sx={{ ml: 1, height: 20, fontSize: "0.7rem", py: 0 }}
                       >

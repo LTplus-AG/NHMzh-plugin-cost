@@ -14,6 +14,7 @@ const {
   saveCostData,
   saveCostDataBatch,
   getElementEbkpCode,
+  getAllProjects, // <-- Import getAllProjects
 } = require("./mongodb");
 
 // Load environment variables
@@ -81,10 +82,16 @@ const MATCH_CACHE_DURATION = parseInt(
   process.env.MATCH_CACHE_DURATION_MS || "300000"
 ); // Default 5 minutes
 
+// Add state tracking for the cost producer connection
+let costProducerConnected = false;
+
 // Add this near the top of the file, with other globals
 // Track elements already sent to Kafka to prevent duplicates
 // const kafkaSentElements = new Set();
 // const KAFKA_DEDUP_TIMEOUT = 60 * 60 * 1000; // 1 hour
+
+// Add a simple in-memory store for project metadata near the top
+const projectMetadataStore = {}; // Use object as a map
 
 console.log("Starting WebSocket server with configuration:", {
   kafkaBroker: config.kafka.broker,
@@ -182,8 +189,8 @@ const server = http.createServer((req, res) => {
     res.end(
       JSON.stringify({
         status: "UP",
-        kafka: consumer.isRunning ? "CONNECTED" : "DISCONNECTED",
-        costProducer: costProducer.isConnected ? "CONNECTED" : "DISCONNECTED",
+        kafkaConsumer: consumer.isRunning ? "CONNECTED" : "DISCONNECTED",
+        costProducer: costProducerConnected ? "CONNECTED" : "DISCONNECTED",
         clients: clients.size,
         topics: [config.kafka.topic, config.kafka.costTopic],
         elements: {
@@ -193,6 +200,30 @@ const server = http.createServer((req, res) => {
         },
       })
     );
+  }
+  // Endpoint to get all projects
+  else if (req.url === "/projects") {
+    if (!config.mongodb.enabled) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "MongoDB is not enabled" }));
+      return;
+    }
+
+    console.log("Received request for all projects");
+
+    (async () => {
+      try {
+        const projects = await getAllProjects();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(projects)); // Send the array of projects
+      } catch (error) {
+        console.error("Error getting all projects:", error);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({ error: `Failed to get projects: ${error.message}` })
+        );
+      }
+    })();
   }
   // Endpoint to get all stored elements
   else if (req.url === "/elements") {
@@ -256,18 +287,18 @@ const server = http.createServer((req, res) => {
     }
 
     console.log(
-      `Received request for project elements (from cost DB) by name: ${projectName}`
+      `Received request for project elements (fetching ONLY from qto.elements) by name: ${projectName}` // Updated log
     );
 
-    // Fetch elements, trying costElements first, then falling back to qto.elements
+    // Fetch elements directly from qto.elements
     (async () => {
       let elements = [];
-      let sourceDb = "costElements"; // Track where we got the data from
+      let sourceDb = "qto.elements"; // Source is always qto.elements now
       try {
         const { costDb, qtoDb } = await connectToMongoDB();
 
-        if (!costDb || !qtoDb) {
-          throw new Error("Failed to connect to necessary databases.");
+        if (!qtoDb) {
+          throw new Error("Failed to connect to QTO database.");
         }
 
         // 1. Find the project ID using the project name (from qtoDb)
@@ -289,30 +320,30 @@ const server = http.createServer((req, res) => {
           `Found project ID: ${projectId} for project: ${projectName}`
         );
 
-        // 2. Try querying the costElements collection using the projectId
-        elements = await costDb
-          .collection("costElements")
-          .find({ project_id: projectId })
+        // 2. Directly query the qto.elements collection using the projectId
+        elements = await qtoDb
+          .collection("elements")
+          .find({
+            project_id: projectId,
+            status: "active", // Only include elements with active status
+          })
           .toArray();
 
-        console.log(
-          `Attempt 1: Retrieved ${elements.length} elements from costElements for project: ${projectName}`
-        );
+        // Check if any pending elements were skipped
+        const pendingCount = await qtoDb.collection("elements").countDocuments({
+          project_id: projectId,
+          status: "pending",
+        });
 
-        // 3. If no elements found in costElements, try qto.elements as fallback
-        if (elements.length === 0) {
+        if (pendingCount > 0) {
           console.log(
-            `No elements found in costElements, falling back to qto.elements`
-          );
-          sourceDb = "qto.elements";
-          elements = await qtoDb
-            .collection("elements")
-            .find({ project_id: projectId })
-            .toArray();
-          console.log(
-            `Attempt 2: Retrieved ${elements.length} elements from qto.elements for project: ${projectName}`
+            `Skipped ${pendingCount} QTO elements with pending status for project ${projectName}`
           );
         }
+
+        console.log(
+          `Retrieved ${elements.length} active QTO elements from qto.elements for project: ${projectName}`
+        );
 
         res.writeHead(200, { "Content-Type": "application/json" });
         // Return the elements found
@@ -1377,25 +1408,16 @@ wss.on("connection", async (ws, req) => {
             const matchedResult = await saveCostDataBatch(
               matchedItems,
               projectName,
-              // Pass our new more efficient batch sender
-              async (elements) => {
-                // Get filename from project if available
-                let filename = "";
-                if (
-                  qtoProject &&
-                  qtoProject.metadata &&
-                  qtoProject.metadata.filename
-                ) {
-                  filename = qtoProject.metadata.filename;
-                }
-
-                // Use the new batch sending function
-                return await sendCostElementsToKafka(
-                  elements,
-                  projectName,
-                  filename
-                );
-              }
+              // Pass the correct batch sending function
+              sendCostElementsToKafka // <-- Use this function
+              // REMOVED old callback:
+              // async (elements) => {
+              //   let filename = "";
+              //   if (qtoProject && qtoProject.metadata && qtoProject.metadata.filename) {
+              //     filename = qtoProject.metadata.filename;
+              //   }
+              //   return await sendCostElementsToKafka(elements, projectName, filename);
+              // }
             );
             console.log(
               `Processed ${matchedItems.length} matched items for costElements collection`
@@ -1761,55 +1783,42 @@ async function ensureTopicExists(topic) {
 
 // Start Kafka consumer and connect to WebSocket
 async function run() {
+  let adminConnected = false;
   try {
-    // Connect to Kafka broker (admin operations)
+    // 1. Connect Admin and Ensure Topics
+    console.log("Connecting Kafka admin client...");
     await admin.connect();
-    console.log("Connected to Kafka broker (admin): " + config.kafka.broker);
+    adminConnected = true;
+    console.log("Kafka admin client connected.");
+    await ensureTopicExists(config.kafka.topic); // Note: ensureTopicExists connects/disconnects admin internally
+    await ensureTopicExists(config.kafka.costTopic); // Note: ensureTopicExists connects/disconnects admin internally
+    console.log("Topics ensured.");
+    // No need to disconnect admin here as ensureTopicExists does it.
+    adminConnected = false; // Mark as disconnected after use
 
-    // Initialize MongoDB connection if enabled
-    if (config.mongodb.enabled) {
-      try {
-        await connectToMongoDB();
-        console.log("MongoDB connection initialized");
-      } catch (mongoError) {
-        console.error(
-          "MongoDB connection initialization failed:",
-          mongoError.message
-        );
-        console.log(
-          "The application will continue but MongoDB-dependent features will not work"
-        );
-        // Continue execution - we'll attempt to reconnect on each DB operation
-      }
-    }
+    // 2. Connect Cost Producer
+    console.log("Attempting to connect cost producer...");
+    await costProducer.connect();
+    console.log("Cost producer connected successfully.");
+    costProducerConnected = true; // Set state on success
 
-    // Check if topics exist, create if not
-    await ensureTopicExists(config.kafka.topic);
-    await ensureTopicExists(config.kafka.costTopic);
-
-    // First check Kafka connection by connecting a producer
-    await producer.connect();
-    console.log("Connected to Kafka broker (producer):", config.kafka.broker);
-
-    // Disconnect producer as we don't need it anymore
-    await producer.disconnect();
-
-    // Now connect the consumer
+    // 3. Connect and Run Consumer
+    console.log("Connecting Kafka consumer...");
     await consumer.connect();
-    console.log("Connected to Kafka broker (consumer):", config.kafka.broker);
-    isKafkaConnected = true;
+    console.log("Kafka consumer connected.");
+    isKafkaConnected = true; // Set general Kafka connection flag
 
     // Broadcast Kafka connection status to all clients
     broadcast(JSON.stringify({ type: "kafka_status", status: "CONNECTED" }));
 
-    // Subscribe to topic
+    console.log("Subscribing to topic:", config.kafka.topic);
     await consumer.subscribe({
       topic: config.kafka.topic,
-      fromBeginning: false,
+      fromBeginning: false, // Set to true if you need to process old messages on restart
     });
-    console.log("Subscribed to topic:", config.kafka.topic);
+    console.log("Subscription successful.");
 
-    // Start consuming messages
+    console.log("Starting Kafka message processing loop...");
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
         try {
@@ -1817,352 +1826,119 @@ async function run() {
           if (messageValue) {
             console.log(
               `Received message from Kafka topic ${topic}:`,
-              messageValue.substring(0, 200) + "..."
+              messageValue.substring(0, 200) + "..." // Log truncated message
             );
 
-            // Parse the message data
-            const messageData = JSON.parse(messageValue);
-
-            // Check if this is a PROJECT_UPDATED notification
-            if (messageData.eventType === "PROJECT_UPDATED") {
-              console.log(
-                `Received PROJECT_UPDATED notification for project: ${messageData.payload.projectName} (ID: ${messageData.payload.projectId})`
+            let messageData;
+            try {
+              // Attempt to parse the message
+              messageData = JSON.parse(messageValue);
+            } catch (parseError) {
+              // Handle JSON parsing errors specifically
+              console.error(
+                "Error parsing Kafka message JSON:",
+                parseError,
+                "Raw value:",
+                messageValue.substring(0, 500) + "..." // Log truncated raw value
               );
+              // Skip further processing for this message if parsing failed
+              return;
+            }
 
-              // Extract project information
-              const projectId = messageData.payload.projectId;
-              const projectName = messageData.payload.projectName;
-              const elementCount = messageData.payload.elementCount;
+            // --- Start processing logic (only runs if JSON parsing succeeded) ---
 
-              try {
-                // Fetch all elements for this project from MongoDB
+            // Handle PROJECT_UPDATED notification
+            if (messageData.eventType === "PROJECT_UPDATED") {
+              const { projectId, projectName, filename, timestamp, fileId } =
+                messageData.payload || {}; // Added default empty object
+
+              if (projectId && projectName) {
+                // Check essential fields
                 console.log(
-                  `Fetching all elements for project ${projectName} (ID: ${projectId})`
+                  `Received PROJECT_UPDATED notification for project: ${projectName} (ID: ${projectId})`
                 );
-                const elements = await getAllElementsForProject(projectId);
+
+                // Store/Update metadata
+                projectMetadataStore[projectId] = {
+                  project: projectName,
+                  filename: filename || "unknown.ifc",
+                  timestamp: timestamp || new Date().toISOString(), // Use provided or current timestamp
+                  fileId: fileId || projectId,
+                };
                 console.log(
-                  `Retrieved ${elements.length} elements for project ${projectName}`
+                  `Stored/Updated metadata for projectId ${projectId}:`,
+                  projectMetadataStore[projectId]
                 );
 
-                if (elements.length > 0) {
-                  // Get project info to extract filename
-                  let filename = "";
-                  try {
-                    const project = await qtoDb.collection("projects").findOne({
-                      _id: new ObjectId(projectId),
-                    });
-                    if (
-                      project &&
-                      project.metadata &&
-                      project.metadata.filename
-                    ) {
-                      filename = project.metadata.filename;
-                      console.log(
-                        `Using filename from project metadata: ${filename}`
-                      );
-                    }
-                  } catch (err) {
-                    console.warn(
-                      `Unable to get filename from project metadata: ${err.message}`
-                    );
-                  }
-
-                  // Update the project data in our in-memory storage
-                  elementsByProject[projectName] = {};
-
-                  // Process and organize elements by EBKPH code
-                  elements.forEach((element) => {
-                    const ebkpCode =
-                      element.properties?.classification?.id ||
-                      element.ebkph ||
-                      "unknown";
-                    const normalizedCode = normalizeEbkpCode(ebkpCode);
-
-                    // Store by EBKPH code
-                    if (!ifcElementsByEbkph[normalizedCode]) {
-                      ifcElementsByEbkph[normalizedCode] = [];
-                    }
-                    ifcElementsByEbkph[normalizedCode].push(element);
-
-                    // Also store by project for easier retrieval
-                    if (!elementsByProject[projectName][normalizedCode]) {
-                      elementsByProject[projectName][normalizedCode] = [];
-                    }
-                    elementsByProject[projectName][normalizedCode].push(
-                      element
-                    );
-
-                    // Mark as processed to avoid duplicates
-                    const elementId = element._id.toString();
-                    processedElementIds.add(elementId);
-                  });
-
-                  // Calculate costs for all elements
-                  let projectTotalCost = 0;
-                  let elementsWithCost = 0;
-
-                  for (const ebkpCode in elementsByProject[projectName]) {
-                    const elementsWithThisCode =
-                      elementsByProject[projectName][ebkpCode];
-
-                    // Find the best match for this code
-                    const bestMatch = findBestEbkphMatch(ebkpCode);
-
-                    if (bestMatch) {
-                      // Get cost information
-                      const costInfo = bestMatch.costInfo;
-                      const costUnit = costInfo.cost_unit || 0;
-
-                      // Apply costs to all elements with this code
-                      elementsWithThisCode.forEach((element, index) => {
-                        const area = parseFloat(element.quantity || 0);
-                        const totalCost = costUnit * (area || 1);
-
-                        // Update element with cost data
-                        element.cost_unit = costUnit;
-                        element.cost = totalCost;
-                        element.cost_source = costInfo.filename;
-                        element.cost_timestamp = costInfo.timestamp;
-                        element.cost_match_method = bestMatch.method;
-                        element.sequence = index; // Add sequence number based on position in the array
-
-                        // Update project total
-                        projectTotalCost += totalCost;
-                        elementsWithCost++;
-
-                        // Send enhanced element to cost topic with proper format
-                        sendEnhancedElementToKafka(
-                          {
-                            ...element,
-                            project: projectName,
-                            filename: filename || "unknown.ifc", // Use the filename from project metadata
-                            is_structural:
-                              element.properties?.structuralRole ===
-                                "load_bearing" || false,
-                            fire_rating: element.properties?.fireRating || "",
-                            ebkph:
-                              element.properties?.classification?.id ||
-                              element.ebkph ||
-                              ebkpCode,
-                            cost_unit: costUnit,
-                            cost: totalCost,
-                            sequence: index, // Explicitly set sequence
-                          },
-                          index
-                        ); // Pass sequence as second parameter
-                      });
-
-                      // Broadcast cost match notification
-                      broadcastCostMatch(
-                        bestMatch.code,
-                        costUnit,
-                        elementsWithThisCode.length
-                      );
-                    }
-                  }
-
-                  // Update project cost summary in MongoDB
-                  await updateProjectCostSummary(projectId);
-
-                  // Broadcast project update to clients
-                  const projectUpdateMessage = {
-                    type: "project_update",
-                    projectId: projectId,
-                    projectName: projectName,
-                    totalElements: elements.length,
-                    elementsWithCost: elementsWithCost,
-                    totalCost: projectTotalCost,
-                    timestamp: new Date().toISOString(),
-                    metadata: messageData.metadata,
-                  };
-
-                  console.log(
-                    `Broadcasting project update for ${projectName} with total cost: ${projectTotalCost}`
-                  );
-                  broadcast(JSON.stringify(projectUpdateMessage));
-                } else {
-                  console.log(
-                    `No elements found for project ${projectName} (ID: ${projectId})`
-                  );
-                }
-              } catch (err) {
-                console.error(
-                  `Error processing project update for ${projectName}:`,
-                  err
+                // Trigger cost summary update
+                console.log(
+                  `Triggering cost summary update for project ${projectId}`
+                );
+                await updateProjectCostSummary(projectId);
+              } else {
+                console.warn(
+                  "Received PROJECT_UPDATED message with missing projectId or projectName",
+                  messageData.payload
                 );
               }
             } else {
-              // Handle legacy element messages for backward compatibility
-              const elementData = messageData;
-
-              // Check if we've already processed this element
-              const elementId = elementData.element_id || elementData.id;
-              if (!elementId || processedElementIds.has(elementId)) {
-                // Skip duplicates
-                broadcast(messageValue); // Still forward the message to clients
-                return;
-              }
-
-              // Store the element by EBKPH code for later use
-              if (elementData.ebkph) {
-                // Normalize EBKPH code
-                const ebkpCode = normalizeEbkpCode(elementData.ebkph);
-
-                // Ensure category contains IFC class
-                let ifcClass = "";
-                if (elementData.ifcClass) {
-                  ifcClass = elementData.ifcClass;
-                } else if (elementData.ifc_class) {
-                  ifcClass = elementData.ifc_class;
-                } else if (
-                  elementData.category &&
-                  elementData.category.toLowerCase().startsWith("ifc")
-                ) {
-                  ifcClass = elementData.category;
-                } else if (
-                  elementData.properties?.category &&
-                  elementData.properties.category
-                    .toLowerCase()
-                    .startsWith("ifc")
-                ) {
-                  ifcClass = elementData.properties.category;
-                } else if (
-                  elementData.properties?.type &&
-                  elementData.properties.type.toLowerCase().startsWith("ifc")
-                ) {
-                  ifcClass = elementData.properties.type;
-                }
-
-                // Set the category to IFC class if found
-                if (ifcClass) {
-                  elementData.category = ifcClass;
-                }
-
-                // Store by EBKPH code
-                if (!ifcElementsByEbkph[ebkpCode]) {
-                  ifcElementsByEbkph[ebkpCode] = [];
-                }
-                // Add this element with its index as sequence number
-                elementData.sequence = ifcElementsByEbkph[ebkpCode].length; // Set sequence based on position in array
-                ifcElementsByEbkph[ebkpCode].push(elementData);
-
-                // Also store by project for easier retrieval
-                const projectKey = elementData.project || "unknown";
-                if (!elementsByProject[projectKey]) {
-                  elementsByProject[projectKey] = {};
-                }
-                if (!elementsByProject[projectKey][ebkpCode]) {
-                  elementsByProject[projectKey][ebkpCode] = [];
-                }
-                // Set sequence based on position in this project's array for this code
-                elementData.sequence =
-                  elementsByProject[projectKey][ebkpCode].length;
-                elementsByProject[projectKey][ebkpCode].push(elementData);
-
-                // Mark as processed to avoid duplicates
-                processedElementIds.add(elementId);
-
-                console.log(
-                  `Stored IFC element with EBKPH ${ebkpCode} (element ID: ${elementId}, sequence: ${elementData.sequence}, category: ${elementData.category})`
-                );
-
-                // Save to file periodically
-                scheduleElementSave();
-              }
-
-              // If element has an EBKPH code, check if we have a unit cost for it
-              if (elementData.ebkph) {
-                // Normalize the code for lookup
-                const normalizedCode = normalizeEbkpCode(elementData.ebkph);
-
-                // Debug log all available cost codes for comparison
-                if (Object.keys(unitCostsByEbkph).length > 0) {
-                  console.log(
-                    `Looking for cost data match for element EBKPH ${elementData.ebkph} (normalized: ${normalizedCode})`
-                  );
-                  console.log(
-                    `Available cost codes: ${Object.keys(unitCostsByEbkph).join(
-                      ", "
-                    )}`
-                  );
-                }
-
-                // Find the best match for this code
-                const bestMatch = findBestEbkphMatch(normalizedCode);
-
-                if (bestMatch) {
-                  // Add cost information to the element
-                  const costInfo = bestMatch.costInfo;
-                  const area = parseFloat(elementData.area || 0);
-                  const costUnit = costInfo.cost_unit || 0;
-
-                  // Enhanced element with cost data - preserve original structure
-                  const enhancedElement = {
-                    ...elementData, // Keep all original element properties
-                    cost_unit: costUnit,
-                    cost: costUnit * (area || 1), // Calculate total cost
-                    cost_source: costInfo.filename,
-                    cost_timestamp: costInfo.timestamp,
-                    cost_match_method: bestMatch.method,
-                  };
-
-                  // Make sure EBKPH components are present
-                  if (costInfo.ebkph1 && !enhancedElement.ebkph1) {
-                    enhancedElement.ebkph1 = costInfo.ebkph1;
-                  }
-                  if (costInfo.ebkph2 && !enhancedElement.ebkph2) {
-                    enhancedElement.ebkph2 = costInfo.ebkph2;
-                  }
-                  if (costInfo.ebkph3 && !enhancedElement.ebkph3) {
-                    enhancedElement.ebkph3 = costInfo.ebkph3;
-                  }
-
-                  console.log(
-                    `MATCH FOUND (${bestMatch.method}): Added cost data to element with EBKPH ${elementData.ebkph} (normalized: ${normalizedCode}): unit cost = ${costUnit}, area = ${area}, total cost = ${enhancedElement.cost}, sequence = ${enhancedElement.sequence}, category: ${enhancedElement.category}`
-                  );
-
-                  // Send enhanced element to cost topic
-                  await sendEnhancedElementToKafka(
-                    enhancedElement,
-                    enhancedElement.sequence
-                  );
-
-                  // Also notify clients about this match
-                  broadcastCostMatch(bestMatch.code, costUnit, 1);
-                } else {
-                  console.log(
-                    `No cost data found for EBKPH code ${elementData.ebkph} (normalized: ${normalizedCode})`
-                  );
-                }
-              }
-
-              // Forward original message to all connected WebSocket clients
-              broadcast(messageValue);
+              // Handle other message types if needed
+              console.log(
+                `Received non-PROJECT_UPDATED message type: ${
+                  messageData.type || "unknown"
+                }. Skipping detailed processing.`
+              );
+              // Optionally forward original message: broadcast(messageValue);
             }
+            // --- End processing logic ---
+          } else {
+            console.log(`Received empty message from Kafka topic ${topic}.`);
           }
-        } catch (err) {
-          console.error("Error processing message:", err);
+        } catch (processingError) {
+          // Catch any errors that occur *during* the processing logic (after successful parsing)
+          console.error(
+            "Error processing Kafka message content:",
+            processingError
+          );
         }
-      },
+      }, // End of eachMessage
     });
+    console.log("Kafka consumer is running.");
   } catch (error) {
-    console.error("Error running Kafka consumer:", error);
+    console.error("Error during Kafka startup:", error);
+    // Update connection states on error
     isKafkaConnected = false;
+    if (!costProducer.isConnected()) {
+      // Check if cost producer specifically failed
+      costProducerConnected = false;
+    }
 
-    // Broadcast Kafka connection status to all clients
+    // Disconnect admin if it was left connected due to error before ensureTopicExists
+    if (adminConnected) {
+      try {
+        await admin.disconnect();
+      } catch (e) {
+        console.error("Error disconnecting admin during cleanup:", e);
+      }
+    }
+
+    // Broadcast Kafka connection status
     broadcast(
       JSON.stringify({
         type: "kafka_status",
         status: "DISCONNECTED",
         error: error.message,
+        costProducerStatus: costProducerConnected
+          ? "CONNECTED"
+          : "DISCONNECTED", // Include cost producer status
       })
     );
 
-    // Try to reconnect after a delay
-    setTimeout(() => {
-      console.log("Attempting to reconnect to Kafka...");
-      run();
-    }, 5000);
+    // Optional: Implement retry logic here if desired
+    // setTimeout(() => {
+    //   console.log("Attempting to reconnect to Kafka...");
+    //   run();
+    // }, 5000); // Example: Retry after 5 seconds
   }
 }
 
@@ -2208,108 +1984,352 @@ function sendTestMessage() {
   setTimeout(sendTestMessage, 15000); // Every 15 seconds
 }
 
-// Send enhanced element with cost data to Kafka
-async function sendEnhancedElementToKafka(enhancedElement, sequence = 0) {
+// Define the new CostData interface (as comments for JS context)
+/*
+interface CostData {
+    id: string; // Original element ID
+    cost: number;
+    cost_unit: number;
+}
+interface IfcFileData {
+    project: string;
+    filename: string;
+    timestamp: string; // Original timestamp
+    fileId: string;   // Original file ID
+    data?: CostData[]; // Array of cost data
+}
+*/
+
+// Modify sendEnhancedElementToKafka (and implicitly sendBatchElementsToKafka/sendCostElementsToKafka)
+// This function needs the original metadata. Let's assume it's passed or retrieved.
+async function sendEnhancedElementToKafka(
+  enhancedElement,
+  originalMetadata = null // Removed sequence parameter
+) {
+  // Check if producer was connected at startup
+  if (!costProducerConnected) {
+    console.warn(
+      `Cost producer not connected (state check). Cannot send element ${enhancedElement.element_id}.`
+    );
+    return false; // Indicate failure
+  }
+
+  // Ensure key properties exist
+  const projectId = enhancedElement.project_id || originalMetadata?.project_id;
+
+  if (!projectId) {
+    console.error(
+      `Cannot send Cost data to Kafka: Project ID not found for element ${enhancedElement.element_id}`
+    );
+    return false; // Indicate failure
+  }
+
+  // Get the original project metadata
+  const meta = originalMetadata || projectMetadataStore[projectId];
+
+  if (!meta) {
+    console.error(
+      `Cannot send Cost data to Kafka: Metadata not found for element ${enhancedElement.element_id} (Project ID: ${projectId})`
+    );
+    // Attempt fallback to get from element if available
+    if (
+      !enhancedElement.project ||
+      !enhancedElement.filename ||
+      !enhancedElement.timestamp
+    ) {
+      console.warn(
+        `Element ${enhancedElement.element_id} missing project/filename/timestamp for fallback.`
+      );
+      return false;
+    }
+    // Use element data as fallback metadata (less ideal)
+    meta = {
+      project: enhancedElement.project,
+      filename: enhancedElement.filename,
+      timestamp: enhancedElement.timestamp || new Date().toISOString(), // Use element timestamp or current if missing
+      fileId: enhancedElement.fileId || projectId || enhancedElement.id, // Fallback fileId
+    };
+    console.warn(
+      `Using fallback metadata from element ${enhancedElement.element_id}`
+    );
+  }
+
+  // REMOVED: The check for costProducer.isConnected() is removed. We trust the startup state.
+  // if (!costProducer.isConnected()) {
+  //   console.error("Cost producer is not connected. Cannot send message.");
+  //   return false;
+  // }
+
+  // Create the CostData payload item
+  const costDataItem /* : CostData */ = {
+    id: enhancedElement.element_id || enhancedElement.id,
+    cost: enhancedElement.cost || 0, // Default to 0 if missing
+    cost_unit: enhancedElement.cost_unit || 0, // Default to 0 if missing
+  };
+
+  // Create the standardized IfcFileData message
+  const costMessage /* : IfcFileData */ = {
+    project: meta.project,
+    filename: meta.filename,
+    timestamp: meta.timestamp,
+    fileId: meta.fileId,
+    data: [costDataItem],
+  };
+
+  const messageKey = meta.fileId;
+
   try {
-    // Make sure cost topic exists
-    if (!costTopicReady) {
-      console.log(`Ensuring cost topic exists: ${config.kafka.costTopic}`);
-      costTopicReady = await ensureTopicExists(config.kafka.costTopic);
-    }
+    console.log(
+      `Attempting to send Cost message (IfcFileData) to Kafka topic ${config.kafka.costTopic}:`,
+      // ... (logging object remains the same) ...
+      { project: costMessage.project, filename: costMessage.filename /* ... */ }
+    );
 
-    // Make sure cost producer is connected
-    if (!costProducer.isConnected) {
-      console.log("Connecting cost producer to Kafka...");
-      await costProducer.connect();
-      console.log("Cost producer connected to Kafka");
-    }
-
-    // Get IFC class for category - ensure it's populated from the right property
-    // Check multiple possible sources for the IFC class
-    let ifcClass = "";
-    if (enhancedElement.ifcClass) {
-      ifcClass = enhancedElement.ifcClass;
-    } else if (enhancedElement.ifc_class) {
-      ifcClass = enhancedElement.ifc_class;
-    } else if (
-      enhancedElement.category &&
-      enhancedElement.category.toLowerCase().startsWith("ifc")
-    ) {
-      ifcClass = enhancedElement.category;
-    } else if (
-      enhancedElement.properties?.category &&
-      enhancedElement.properties.category.toLowerCase().startsWith("ifc")
-    ) {
-      ifcClass = enhancedElement.properties.category;
-    } else if (
-      enhancedElement.properties?.type &&
-      enhancedElement.properties.type.toLowerCase().startsWith("ifc")
-    ) {
-      ifcClass = enhancedElement.properties.type;
-    }
-
-    // Format the message according to the required structure
-    // Keep only id and cost
-    const costDataItem = {
-      id: enhancedElement.element_id || enhancedElement.id,
-      cost: enhancedElement.cost || 0,
-      // category: ifcClass || enhancedElement.category || "unknown",
-      // level: enhancedElement.level || "",
-      // is_structural: enhancedElement.is_structural || false,
-      // fire_rating: enhancedElement.fire_rating || "",
-      // ebkph: enhancedElement.ebkph || "",
-      cost_unit: enhancedElement.cost_unit || 0,
-      // sequence: typeof sequence === "number" ? sequence : 0, // Ensure sequence is a number
-    };
-
-    const costMessage = {
-      project: enhancedElement.project || "",
-      filename: enhancedElement.filename || "",
-      timestamp: new Date().toISOString(),
-      data: [costDataItem],
-      // fileID is excluded from JSON but still used as the Kafka message key
-    };
-
-    // Create fileID for use as message key but not included in message body
-    const fileID = `${enhancedElement.project || ""}/${
-      enhancedElement.filename || ""
-    }`;
-
-    // Log what we're sending to help with debugging
-    console.log("Sending cost message to Kafka topic:", {
-      project: costMessage.project,
-      dataCount: costMessage.data.length,
-      sampleItem: {
-        id: costDataItem.id,
-        cost: costDataItem.cost,
-        // category: costDataItem.category,
-        // ebkph: costDataItem.ebkph,
-        cost_unit: costDataItem.cost_unit,
-        // sequence: costDataItem.sequence, // Add sequence to logging
-      },
-    });
-
-    // Send the formatted message to Kafka
-    const result = await costProducer.send({
+    await costProducer.send({
       topic: config.kafka.costTopic,
-      messages: [
-        {
-          value: JSON.stringify(costMessage),
-          key: fileID,
-        },
-      ],
+      messages: [{ value: JSON.stringify(costMessage), key: messageKey }],
     });
 
-    console.log(`Cost message sent to Kafka topic ${config.kafka.costTopic}`);
+    console.log(
+      `Cost message sent successfully to Kafka topic ${config.kafka.costTopic}`
+    );
     return true;
-  } catch (error) {
-    console.error("Error sending cost message to Kafka:", error);
+  } catch (sendError) {
+    console.error("Error sending cost message to Kafka:", sendError);
+    // Optional: Consider setting costProducerConnected = false here if the error indicates a persistent disconnection
+    // if (isFatalKafkaError(sendError)) { costProducerConnected = false; }
     return false;
   }
 }
 
-// Flag to track if cost topic is ready
-let costTopicReady = false;
+// Modify sendBatchElementsToKafka to use the new format and pass metadata
+async function sendBatchElementsToKafka(
+  elements,
+  project, // Note: project object might not be available, use meta instead
+  filename, // Note: filename might not be available, use meta instead
+  originalMetadata = null
+) {
+  // Check if producer was connected at startup
+  if (!costProducerConnected) {
+    console.warn(
+      `Cost producer not connected (state check). Cannot send batch for project ${
+        originalMetadata?.project || "Unknown Project" // Use metadata project name
+      }.`
+    );
+    return false; // Return simple boolean for consistency
+  }
+
+  if (!elements || elements.length === 0) {
+    console.log("No elements provided to sendBatchElementsToKafka.");
+    return false; // Nothing to send
+  }
+
+  // Retrieve metadata (logic remains the same)
+  let meta = originalMetadata;
+  // ... (metadata retrieval/fallback logic remains the same) ...
+  if (!meta && elements.length > 0) {
+    const firstElementProjectId =
+      elements[0].project_id?.toString() || elements[0].projectId?.toString();
+    meta = projectMetadataStore[firstElementProjectId];
+    if (!meta) {
+      console.error(
+        `Metadata not found for project associated with batch (e.g., ${firstElementProjectId}). Cannot send batch.`
+      );
+      if (
+        !elements[0].project ||
+        !elements[0].filename ||
+        !elements[0].timestamp
+      ) {
+        console.warn(
+          `First element missing project/filename/timestamp for fallback.`
+        );
+        return false;
+      }
+      meta = {
+        project: elements[0].project,
+        filename: elements[0].filename,
+        timestamp: elements[0].timestamp,
+        fileId: elements[0].fileId || firstElementProjectId || elements[0].id,
+      };
+      console.warn(`Using fallback metadata from first element for batch.`);
+    }
+  }
+  if (!meta) {
+    console.error(`Still no metadata available. Cannot send batch.`);
+    return false;
+  }
+
+  // REMOVED: The check for costProducer.isConnected() is removed.
+  // if (!costProducer.isConnected()) {
+  //   console.error("Cost producer is not connected. Cannot send batch.");
+  //   return false;
+  // }
+
+  // Create CostData items (logic remains the same)
+  // ...
+  const costDataItems /* : CostData[] */ = elements.map((element) => ({
+    id: element.element_id || element.id,
+    cost: element.cost || 0, // Default to 0
+    cost_unit: element.cost_unit || 0, // Default to 0
+  }));
+
+  // Create IfcFileData message (logic remains the same)
+  // ...
+  const costMessage /* : IfcFileData */ = {
+    project: meta.project,
+    filename: meta.filename,
+    timestamp: meta.timestamp,
+    fileId: meta.fileId,
+    data: costDataItems,
+  };
+
+  const messageKey = meta.fileId;
+
+  try {
+    console.log(
+      `Attempting to send Cost batch message (IfcFileData) to Kafka topic ${config.kafka.costTopic}:`,
+      // ... (logging object remains the same) ...
+      { project: costMessage.project, filename: costMessage.filename /* ... */ }
+    );
+
+    await costProducer.send({
+      topic: config.kafka.costTopic,
+      messages: [{ value: JSON.stringify(costMessage), key: messageKey }],
+    });
+
+    console.log(
+      `Cost batch message sent successfully to Kafka topic ${config.kafka.costTopic}`
+    );
+    return true; // Indicate success
+  } catch (sendError) {
+    console.error("Error sending batch cost elements to Kafka:", sendError);
+    // Optional: Consider setting costProducerConnected = false here
+    // if (isFatalKafkaError(sendError)) { costProducerConnected = false; }
+    return false; // Indicate failure
+  }
+}
+
+// Update the sendCostElementsToKafka function (called from mongodb.js)
+// It now accepts the verified kafkaMetadata object directly
+async function sendCostElementsToKafka(elements, kafkaMetadata) {
+  if (!elements || elements.length === 0) {
+    console.log("No cost elements to send to Kafka");
+    return { success: false, count: 0 };
+  }
+
+  // Validate required metadata fields
+  if (
+    !kafkaMetadata ||
+    !kafkaMetadata.project ||
+    !kafkaMetadata.filename ||
+    !kafkaMetadata.timestamp ||
+    !kafkaMetadata.fileId
+  ) {
+    console.error(
+      "Incomplete kafkaMetadata received in sendCostElementsToKafka. Cannot proceed.",
+      kafkaMetadata
+    );
+    return { success: false, count: 0 };
+  }
+
+  console.log(
+    `Preparing to send ${elements.length} elements for project ${kafkaMetadata.project} with timestamp ${kafkaMetadata.timestamp}`
+  );
+
+  // Process in batches using sendBatchElementsToKafka
+  const BATCH_SIZE = 100;
+  let totalSent = 0;
+  for (let i = 0; i < elements.length; i += BATCH_SIZE) {
+    const batch = elements.slice(i, i + BATCH_SIZE);
+    // Pass the batch and the verified metadata object
+    const success = await sendBatchElementsToKafka(batch, kafkaMetadata);
+    if (success) {
+      totalSent += batch.length;
+    }
+    // Optional delay
+    if (elements.length > BATCH_SIZE * 5 && i + BATCH_SIZE < elements.length) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  console.log(
+    `Kafka sending for cost elements complete. Total sent: ${totalSent}/${elements.length}`
+  );
+  return { success: totalSent > 0, count: totalSent };
+}
+
+// Modify sendBatchElementsToKafka to accept elements and kafkaMetadata
+async function sendBatchElementsToKafka(
+  elements,
+  kafkaMetadata // Expect the verified metadata object
+) {
+  if (!costProducerConnected) {
+    console.warn(
+      `Cost producer not connected. Cannot send batch for project ${
+        kafkaMetadata?.project || "Unknown"
+      }.`
+    );
+    return false;
+  }
+  if (!elements || elements.length === 0) {
+    console.log("No elements provided to sendBatchElementsToKafka.");
+    return false;
+  }
+
+  // Validate essential fields in the kafkaMetadata object
+  if (
+    !kafkaMetadata ||
+    !kafkaMetadata.project ||
+    !kafkaMetadata.filename ||
+    !kafkaMetadata.timestamp ||
+    !kafkaMetadata.fileId
+  ) {
+    console.error(
+      "Incomplete kafkaMetadata received in sendBatchElementsToKafka. Cannot send batch.",
+      kafkaMetadata
+    );
+    return false; // Cannot proceed without essential metadata
+  }
+
+  // Create CostData items from the elements array
+  const costDataItems = elements.map((element) => ({
+    id: element.id, // This SHOULD be the global_id (or fallback _id) from mongodb.js
+    cost: element.cost || 0,
+    cost_unit: element.cost_unit || 0,
+  }));
+
+  // Create IfcFileData message using the verified kafkaMetadata
+  const costMessage = {
+    project: kafkaMetadata.project,
+    filename: kafkaMetadata.filename,
+    timestamp: new Date(kafkaMetadata.timestamp).toISOString(), // Ensure ISO format
+    fileId: kafkaMetadata.fileId,
+    data: costDataItems,
+  };
+
+  const messageKey = kafkaMetadata.fileId;
+
+  try {
+    // --- Log the final message structure --- START ---
+    console.log(
+      `Attempting to send Cost batch message (IfcFileData) to Kafka topic ${config.kafka.costTopic}:`,
+      JSON.stringify(costMessage, null, 2) // Log the full message being sent
+    );
+    // --- Log the final message structure --- END ---
+
+    await costProducer.send({
+      topic: config.kafka.costTopic,
+      messages: [{ value: JSON.stringify(costMessage), key: messageKey }],
+    });
+    console.log(
+      `Cost batch message sent successfully to Kafka topic ${config.kafka.costTopic}`
+    );
+    return true;
+  } catch (sendError) {
+    console.error("Error sending batch cost elements to Kafka:", sendError);
+    return false;
+  }
+}
 
 // Handle server shutdown
 const shutdown = async () => {
@@ -2721,229 +2741,6 @@ async function sendTestCostMessage() {
   }
 
   return result;
-}
-
-// Modify the sendBatchElementsToKafka function to use batch processing instead of individual messages
-async function sendBatchElementsToKafka(elements, project, filename) {
-  try {
-    if (!elements || elements.length === 0) {
-      console.log("No elements to send to Kafka");
-      return false;
-    }
-
-    console.log(
-      `Preparing to send batch of ${elements.length} elements to Kafka`
-    );
-
-    // Make sure cost topic exists
-    if (!costTopicReady) {
-      console.log(`Ensuring cost topic exists: ${config.kafka.costTopic}`);
-      costTopicReady = await ensureTopicExists(config.kafka.costTopic);
-    }
-
-    // Make sure cost producer is connected
-    if (!costProducer.isConnected) {
-      console.log("Connecting cost producer to Kafka...");
-      await costProducer.connect();
-      console.log("Cost producer connected to Kafka");
-    }
-
-    // Group elements by project and filename for efficient batching
-    const elementsByKey = {};
-
-    // Process and group elements
-    for (let i = 0; i < elements.length; i++) {
-      const element = elements[i];
-
-      // Add project and filename if not present
-      const elementProject = element.project || project;
-      const elementFilename = element.filename || filename;
-
-      // Create a key for grouping
-      const key = `${elementProject}/${elementFilename}`;
-
-      if (!elementsByKey[key]) {
-        elementsByKey[key] = [];
-      }
-
-      // Get IFC class for category
-      let ifcClass = "";
-      if (element.ifcClass) {
-        ifcClass = element.ifcClass;
-      } else if (element.ifc_class) {
-        ifcClass = element.ifc_class;
-      } else if (
-        element.category &&
-        element.category.toLowerCase().startsWith("ifc")
-      ) {
-        ifcClass = element.category;
-      } else if (
-        element.properties?.category &&
-        element.properties.category.toLowerCase().startsWith("ifc")
-      ) {
-        ifcClass = element.properties.category;
-      } else if (
-        element.properties?.type &&
-        element.properties.type.toLowerCase().startsWith("ifc")
-      ) {
-        ifcClass = element.properties.type;
-      }
-
-      // Create cost data item with sequence number
-      const costDataItem = {
-        id: element.element_id || element.id,
-        cost: element.cost || 0,
-        // category: ifcClass || element.category || "unknown",
-        // level: element.level || "",
-        // is_structural: element.is_structural || false,
-        // fire_rating: element.fire_rating || "",
-        // ebkph: element.ebkph || "",
-        cost_unit: element.cost_unit || 0,
-        // sequence: i, // Use array index as sequence
-      };
-
-      // Add to the appropriate batch
-      elementsByKey[key].push(costDataItem);
-    }
-
-    // Now process each batch
-    let totalSent = 0;
-    const batchPromises = [];
-
-    for (const [key, items] of Object.entries(elementsByKey)) {
-      // Extract project and filename from key
-      const [batchProject, batchFilename] = key.split("/");
-
-      // Create message for this batch
-      const costMessage = {
-        project: batchProject,
-        filename: batchFilename,
-        timestamp: new Date().toISOString(),
-        data: items,
-      };
-
-      // Send batch to Kafka (don't await here - collect promises)
-      batchPromises.push(
-        costProducer
-          .send({
-            topic: config.kafka.costTopic,
-            messages: [
-              {
-                value: JSON.stringify(costMessage),
-                key: key,
-              },
-            ],
-          })
-          .then(() => {
-            totalSent += items.length;
-            console.log(`Sent batch of ${items.length} elements for ${key}`);
-            return items.length;
-          })
-          .catch((error) => {
-            console.error(`Error sending batch for ${key}:`, error);
-            return 0;
-          })
-      );
-    }
-
-    // Wait for all batches to complete
-    const results = await Promise.allSettled(batchPromises);
-    const successCount = results.reduce(
-      (sum, result) => sum + (result.status === "fulfilled" ? result.value : 0),
-      0
-    );
-
-    console.log(
-      `Successfully sent ${successCount} of ${elements.length} elements to Kafka`
-    );
-    return successCount > 0;
-  } catch (error) {
-    console.error("Error sending batch elements to Kafka:", error);
-    return false;
-  }
-}
-
-// Add a new function to handle sending multiple elements from the save_cost_batch_full
-// This is called from the saveCostDataBatch function in mongodb.js
-async function sendCostElementsToKafka(elements, projectName, filename) {
-  // Don't load this if we have no elements
-  if (!elements || elements.length === 0) {
-    console.log("No elements to send to Kafka");
-    return { success: false, count: 0 };
-  }
-
-  // Group elements by EBKP code for better organization
-  const elementsByEbkph = {};
-  elements.forEach((element, index) => {
-    const ebkpCode =
-      element.ebkph || element.properties?.classification?.id || "unknown";
-    if (!elementsByEbkph[ebkpCode]) {
-      elementsByEbkph[ebkpCode] = [];
-    }
-    elementsByEbkph[ebkpCode].push({
-      ...element,
-      project: projectName,
-      filename: filename,
-      sequence: index, // Set sequence based on overall position
-    });
-  });
-
-  // Process in batches of 100 elements max to avoid too large messages
-  const BATCH_SIZE = 100;
-  const batches = [];
-  let currentBatch = [];
-  let totalProcessed = 0;
-
-  // Create batches from all element groups
-  Object.values(elementsByEbkph).forEach((elementsGroup) => {
-    elementsGroup.forEach((element) => {
-      if (currentBatch.length >= BATCH_SIZE) {
-        batches.push([...currentBatch]);
-        currentBatch = [];
-      }
-      currentBatch.push(element);
-      totalProcessed++;
-    });
-  });
-
-  // Add the final batch if it has elements
-  if (currentBatch.length > 0) {
-    batches.push(currentBatch);
-  }
-
-  console.log(
-    `Created ${batches.length} batches from ${totalProcessed} elements for project ${projectName}`
-  );
-
-  // Process each batch with the batch sender
-  let successCount = 0;
-  for (let i = 0; i < batches.length; i++) {
-    try {
-      const batchResult = await sendBatchElementsToKafka(
-        batches[i],
-        projectName,
-        filename
-      );
-      if (batchResult) {
-        successCount += batches[i].length;
-      }
-
-      // Add a small delay between large batches to avoid overwhelming Kafka
-      if (batches.length > 5 && i < batches.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    } catch (error) {
-      console.error(
-        `Error processing batch ${i + 1}/${batches.length}:`,
-        error
-      );
-    }
-  }
-
-  return {
-    success: successCount > 0,
-    count: successCount,
-  };
 }
 
 // Add back the test batch function with our new approach

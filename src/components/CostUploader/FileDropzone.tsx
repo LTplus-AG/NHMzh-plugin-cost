@@ -2,44 +2,41 @@ import { Paper, Typography, Box } from "@mui/material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import { useCallback, useRef, useState } from "react";
 import { getDropzoneStyle } from "./styles";
-import { parseExcelFile } from "./utils";
-import { MetaFile } from "./types";
+// Removed parseExcelFile import, will be handled in parent
+// import { parseExcelFile } from "./utils";
+// Removed MetaFile import as it's not needed here
+// import { MetaFile } from "./types";
 
 interface FileDropzoneProps {
-  onFileUploaded: (metaFile: MetaFile) => void;
-  setIsLoading: (loading: boolean) => void;
+  // Renamed prop to indicate it just passes the selected file
+  onFileSelected: (file: File) => void;
+  // Removed setIsLoading prop
 }
 
-const FileDropzone = ({ onFileUploaded, setIsLoading }: FileDropzoneProps) => {
+const FileDropzone = ({ onFileSelected }: FileDropzoneProps) => {
   const [isDragActive, setIsDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback(
-    async (file: File) => {
+  // Renamed function, now just validates and calls onFileSelected
+  const handleFileSelectedInternal = useCallback(
+    (file: File | null) => {
       if (!file) return;
 
-      console.log(`Processing new file: ${file.name}, Size: ${file.size}`);
-      setIsLoading(true);
+      console.log(`File selected/dropped: ${file.name}, Size: ${file.size}`);
 
-      try {
-        const result = await parseExcelFile(file);
-
-        const metaFile: MetaFile = {
-          file: file,
-          data: result.data,
-          headers: result.headers,
-          missingHeaders: result.missingHeaders,
-          valid: result.valid,
-        };
-
-        onFileUploaded(metaFile);
-      } catch (error) {
-        console.error("Error processing file:", error);
-      } finally {
-        setIsLoading(false);
+      // Basic validation for Excel type
+      if (
+        file.type ===
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+        file.type === "application/vnd.ms-excel"
+      ) {
+        onFileSelected(file); // Pass the raw file up
+      } else {
+        console.warn("Invalid file type selected:", file.type);
+        // TODO: Add user feedback for invalid file type
       }
     },
-    [onFileUploaded, setIsLoading]
+    [onFileSelected]
   );
 
   const handleDrop = useCallback(
@@ -50,24 +47,19 @@ const FileDropzone = ({ onFileUploaded, setIsLoading }: FileDropzoneProps) => {
 
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
         // Get only the first file
-        const file = e.dataTransfer.files[0];
-        // Only accept Excel files
-        if (
-          file.type ===
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-          file.type === "application/vnd.ms-excel"
-        ) {
-          handleFile(file);
-        }
+        handleFileSelectedInternal(e.dataTransfer.files[0]);
       }
     },
-    [handleFile]
+    [handleFileSelectedInternal]
   );
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragActive(true);
+    // Set drag active only if items are being dragged over
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragActive(true);
+    }
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -79,14 +71,14 @@ const FileDropzone = ({ onFileUploaded, setIsLoading }: FileDropzoneProps) => {
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
-        handleFile(e.target.files[0]);
+        handleFileSelectedInternal(e.target.files[0]);
         // Reset input value to allow selecting the same file again
         if (inputRef.current) {
           inputRef.current.value = "";
         }
       }
     },
-    [handleFile]
+    [handleFileSelectedInternal]
   );
 
   const handleClick = () => {

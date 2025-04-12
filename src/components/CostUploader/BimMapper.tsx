@@ -19,6 +19,8 @@ interface BimMapperProps {
   metaFile: MetaFile | null;
   projectName: string;
   onQuantitiesMapped?: (updatedCount: number) => void;
+  setIsLoading: (loading: boolean) => void;
+  setMappingMessage: (message: string) => void;
 }
 
 /**
@@ -29,6 +31,8 @@ const BimMapper = ({
   metaFile,
   projectName,
   onQuantitiesMapped,
+  setIsLoading,
+  setMappingMessage,
 }: BimMapperProps) => {
   const {
     connectionStatus,
@@ -200,79 +204,107 @@ const BimMapper = ({
       return;
     }
 
+    // Set loading state before starting
+    setIsLoading(true);
+    setMappingMessage("Mengen werden aus BIM-Modell zugeordnet...");
+
     // Update current file reference
     currentFileRef.current = fileName;
 
-    try {
-      console.log(`Processing file: ${fileName || "unknown"}`);
+    // Use a setTimeout to allow the loading state to render before heavy processing
+    const processingTimeout = setTimeout(() => {
+      try {
+        console.log(
+          `Processing file for BIM mapping: ${fileName || "unknown"}`
+        );
 
-      // Extract cost items from metaFile
-      const costItems = Array.isArray(metaFile.data)
-        ? metaFile.data
-        : metaFile.data.data;
+        // Extract cost items from metaFile
+        const costItems = Array.isArray(metaFile.data)
+          ? metaFile.data
+          : metaFile.data.data;
 
-      // Get all items (including children)
-      const allItems = getAllItems(costItems);
+        // Get all items (including children)
+        const allItems = getAllItems(costItems);
 
-      if (allItems.length === 0) {
-        console.warn("No items found in the Excel file");
-        quantitiesMappedRef.current = true; // Mark as processed to avoid repeated attempts
-        return;
-      }
+        if (allItems.length === 0) {
+          console.warn("No items found in the Excel file for mapping");
+          quantitiesMappedRef.current = true;
+          setIsLoading(false); // Stop loading
+          return;
+        }
 
-      // Check items with eBKP codes
-      const itemsWithEbkp = allItems.filter(
-        (item) => item.ebkp && item.ebkp !== ""
-      );
+        // Check items with eBKP codes
+        const itemsWithEbkp = allItems.filter(
+          (item) => item.ebkp && item.ebkp !== ""
+        );
 
-      if (itemsWithEbkp.length === 0) {
-        console.warn("No eBKP codes found in the uploaded file");
+        if (itemsWithEbkp.length === 0) {
+          console.warn("No eBKP codes found in the uploaded file for mapping");
+          quantitiesMappedRef.current = true;
+          setIsLoading(false); // Stop loading
+          return;
+        }
+
+        console.log(
+          `Found ${itemsWithEbkp.length} items with eBKP codes in Excel data for mapping`
+        );
+
+        // Update the file data with quantities
+        const updatedItems = mapper.mapQuantitiesToCostItems(costItems);
+
+        // Count items with updated quantities
+        const updatedItemsCount = getAllItems(updatedItems).filter(
+          (item) =>
+            item.menge &&
+            item.menge > 0 &&
+            item.ebkp &&
+            item.areaSource === "IFC"
+        ).length;
+
+        console.log(
+          `Mapping complete: Updated ${updatedItemsCount} items with quantities from BIM model`
+        );
+
+        // Update metaFile with the new data
+        if (Array.isArray(metaFile.data)) {
+          metaFile.data = updatedItems;
+        } else {
+          metaFile.data.data = updatedItems;
+        }
+
+        // Call callback if provided
+        if (onQuantitiesMapped) {
+          onQuantitiesMapped(updatedItemsCount);
+        }
+
+        // Request reapply to update the server, but only once per file and only if we have updates
+        if (updatedItemsCount > 0 && !dataSubmittedRef.current) {
+          setTimeout(() => {
+            requestReapplyCostData().catch(() => {});
+          }, 500);
+        }
+
+        // Mark as processed to prevent further mapping
         quantitiesMappedRef.current = true;
-        return;
+      } catch (error) {
+        console.error("Error mapping quantities:", error);
+        quantitiesMappedRef.current = true; // Mark as processed even on error
+      } finally {
+        // Ensure loading state is always turned off
+        setIsLoading(false);
       }
+    }, 50); // Short delay (50ms) for UI update
 
-      console.log(
-        `Found ${itemsWithEbkp.length} items with eBKP codes in Excel data`
-      );
-
-      // Update the file data with quantities
-      const updatedItems = mapper.mapQuantitiesToCostItems(costItems);
-
-      // Count items with updated quantities
-      const updatedItemsCount = getAllItems(updatedItems).filter(
-        (item) => item.menge && item.menge > 0 && item.ebkp
-      ).length;
-
-      console.log(
-        `Updated ${updatedItemsCount} items with quantities from BIM model`
-      );
-
-      // Update metaFile with the new data
-      if (Array.isArray(metaFile.data)) {
-        metaFile.data = updatedItems;
-      } else {
-        metaFile.data.data = updatedItems;
-      }
-
-      // Call callback if provided
-      if (onQuantitiesMapped) {
-        onQuantitiesMapped(updatedItemsCount);
-      }
-
-      // Request reapply to update the server, but only once per file and only if we have updates
-      if (updatedItemsCount > 0 && !dataSubmittedRef.current) {
-        setTimeout(() => {
-          requestReapplyCostData().catch(() => {});
-        }, 500);
-      }
-
-      // Mark as processed to prevent further mapping
-      quantitiesMappedRef.current = true;
-    } catch (error) {
-      console.error("Error mapping quantities:", error);
-      quantitiesMappedRef.current = true; // Make sure we don't retry on error
-    }
-  }, [mapper, metaFile, onQuantitiesMapped, requestReapplyCostData]);
+    // Cleanup function to clear timeout if component unmounts or dependencies change
+    return () => clearTimeout(processingTimeout);
+  }, [
+    mapper,
+    metaFile,
+    onQuantitiesMapped,
+    requestReapplyCostData,
+    setIsLoading,
+    setMappingMessage,
+  ]);
 
   // Reset state when metaFile changes to a new file
   useEffect(() => {

@@ -69,7 +69,7 @@ interface PreviewModalProps {
   onClose: () => void;
   onConfirm: (matches: EnhancedCostItem[]) => void; // Use the specific type here
   metaFile: MetaFile | null;
-  totalCost: number;
+  calculatedTotalCost: number;
 }
 
 interface MatchInfo {
@@ -150,7 +150,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
   onClose,
   onConfirm,
   metaFile,
-  totalCost,
+  calculatedTotalCost,
 }) => {
   const [loading, setLoading] = useState(false);
   const [elementInfo, setElementInfo] = useState<ElementInfo | null>(null);
@@ -706,7 +706,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                         gutterBottom
                         fontWeight="medium"
                       >
-                        Gesamtkostenschätzung
+                        Gesamtkostenschätzung (Berechnet)
                       </Typography>
 
                       <Typography
@@ -714,7 +714,10 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                         color="primary.main"
                         fontWeight="bold"
                       >
-                        CHF {totalCost.toLocaleString("de-CH")}
+                        CHF{" "}
+                        {calculatedTotalCost.toLocaleString("de-CH", {
+                          maximumFractionDigits: 0,
+                        })}
                       </Typography>
 
                       <Box sx={{ mt: 1 }}>
@@ -723,13 +726,15 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                           .map(([group, cost]) => (
                             <Chip
                               key={group}
-                              label={`${group}: ${cost.toLocaleString(
-                                "de-CH"
-                              )} CHF`}
+                              label={`${group}: ${cost.toLocaleString("de-CH", {
+                                maximumFractionDigits: 0,
+                              })} CHF`}
                               size="small"
                               sx={{ mr: 0.5, mb: 0.5 }}
                               color={
-                                cost > totalCost * 0.25 ? "primary" : "default"
+                                cost > calculatedTotalCost * 0.25
+                                  ? "primary"
+                                  : "default"
                               }
                             />
                           ))}
