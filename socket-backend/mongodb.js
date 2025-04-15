@@ -1053,23 +1053,29 @@ async function saveCostDataBatch(
     );
     // --- Log the fetched qtoProject data --- END ---
 
-    // Extract required metadata for Kafka *now*
-    const kafkaMetadata = {
-      project: qtoProject.name,
-      filename: qtoProject.metadata?.filename || "unknown.ifc",
-      // Prioritize fileProcessingTimestamp, then others
-      timestamp:
-        qtoProject.metadata?.fileProcessingTimestamp ||
-        qtoProject.updated_at ||
-        qtoProject.created_at ||
-        new Date(),
-      fileId: qtoProject.metadata?.file_id || projectId.toString(), // Use file_id from metadata or fallback to projectId
-    };
-    console.log(
-      `Prepared Kafka metadata: ${JSON.stringify(
-        kafkaMetadata
-      )} (Timestamp used: ${new Date(kafkaMetadata.timestamp).toISOString()})`
-    );
+    // Extract required metadata for Kafka, using upload_timestamp
+    const originalTimestamp = qtoProject.metadata?.upload_timestamp;
+    let kafkaMetadata = null; // Initialize as null
+
+    if (!originalTimestamp) {
+      console.error(
+        `CRITICAL: Original upload_timestamp missing in metadata for project ${projectName} (ID: ${projectId}). Cannot create accurate Kafka metadata for cost elements.`
+      );
+      // kafkaMetadata remains null
+    } else {
+      kafkaMetadata = {
+        project: qtoProject.name,
+        filename: qtoProject.metadata?.filename || "unknown.ifc",
+        // Use ONLY the original timestamp
+        timestamp: new Date(originalTimestamp).toISOString(),
+        fileId: qtoProject.metadata?.file_id || projectId.toString(), // Use file_id from metadata or fallback to projectId
+      };
+      console.log(
+        `Prepared Kafka metadata using upload_timestamp: ${JSON.stringify(
+          kafkaMetadata
+        )} (Timestamp used: ${kafkaMetadata.timestamp})`
+      );
+    }
 
     // 2. Delete existing cost elements (remains the same)
     console.log(`Deleting existing cost elements for project ${projectId}`);
@@ -1131,12 +1137,18 @@ async function saveCostDataBatch(
       if (matchedCostData && matchedCostData.unit_cost > 0) {
         const costItemId = matchedCostData._id;
         const unitCost = matchedCostData.unit_cost;
+        // Simplified quantity extraction logic - only check root fields
         const elementQuantity =
-          qtoElement.quantity?.value ||
-          qtoElement.original_quantity?.value ||
-          qtoElement.properties?.area ||
-          0;
+          qtoElement.area || // Check 1: Root area
+          qtoElement.volume || // Check 2: Root volume
+          qtoElement.length || // Check 3: Root length
+          0; // Fallback to 0
         const elementTotalCost = unitCost * elementQuantity;
+
+        // Log the calculation details (simplified)
+        console.log(
+          `[Cost Calc Debug] Element ID: ${qtoElement._id}, EBKP: ${ebkpCode}, UnitCost: ${unitCost}, ElementQuantity: ${elementQuantity} (Source fields checked: area=${qtoElement.area}, volume=${qtoElement.volume}, length=${qtoElement.length}), Calculated TotalCost: ${elementTotalCost}`
+        );
 
         // Build costElementDoc (remains the same)
         const costElementDoc = {
@@ -1211,10 +1223,12 @@ async function saveCostDataBatch(
 
     // 8. Send elements to Kafka, passing the prepared metadata object
     let kafkaResult = { success: false, count: 0 };
+    // Only proceed if kafkaMetadata was successfully created
     if (
       sendKafkaMessage &&
       typeof sendKafkaMessage === "function" &&
-      elementsForKafka.length > 0
+      elementsForKafka.length > 0 &&
+      kafkaMetadata // <-- Check if metadata is valid
     ) {
       console.log(
         `Sending ${elementsForKafka.length} processed elements to Kafka...`
