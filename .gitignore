@@ -25,7 +25,5 @@ dist-ssr
 socket-backend/.env
 public/templates/*
 .env.fastbim
-.env
-.env.development
-.env.production
+.env*
 oldenv
