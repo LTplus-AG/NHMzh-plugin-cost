@@ -1,8 +1,28 @@
-# Plugin-Cost with MongoDB Integration
+# 💰 NHMzh Plugin Cost
 
-A cost calculation plugin for building elements, allowing extraction of cost data from Excel files and applying it to BIM elements. This plugin is part of the NHM (Nachhaltiges Holz Modeler) ecosystem.
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
+[![Node.js](https://img.shields.io/badge/Node.js-20.x-339933.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
+[![WebSockets](https://img.shields.io/badge/WebSockets-010101.svg?style=for-the-badge&logo=socket.io)](https://socket.io/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-47A248.svg?style=for-the-badge&logo=mongodb)](https://www.mongodb.com/)
+[![Kafka](https://img.shields.io/badge/Kafka-231F20.svg?style=for-the-badge&logo=apache-kafka)](https://kafka.apache.org/)
+[![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen.svg?style=for-the-badge)](https://github.com/LTplus-AG/NHMzh-plugin-cost)
 
-## Features
+A cost calculation module for the Sustainability Monitoring System for the City of Zurich (Nachhaltigkeitsmonitoring der Stadt Zürich), allowing extraction of cost data from Excel files and applying it to BIM elements.
+
+## 📋 Table of Contents
+
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Installation](#-installation)
+- [Kafka Topics](#-kafka-topics)
+- [Data Models](#-data-models)
+- [API Endpoints](#-api-endpoints)
+- [WebSocket Events](#-websocket-events)
+- [Integration](#-integration)
+- [Tech Stack](#-tech-stack)
+- [License](#-license)
+
+## ✨ Features
 
 - **WebSocket Backend**: Real-time communication with frontend
 - **Kafka Integration**: Receives elements from QTO plugin and publishes cost calculations
@@ -10,12 +30,35 @@ A cost calculation plugin for building elements, allowing extraction of cost dat
 - **MongoDB Integration**: Persistent storage of cost data
 - **Cost Calculation**: Automatically calculate costs based on element areas and unit costs
 - **Project Summaries**: Calculate and store project-level cost summaries
+- **Integration with NHMzh Ecosystem**: Works with QTO and LCA modules
 
-## Architecture
+## 🔧 Architecture
 
-![Architecture Diagram](https://mermaid.ink/img/pako:eNqNkl1rwjAUhv9KyVUHGtqaD9crmdOxIbSbDnZRSJpTjW2ykmTMIv73JbVurLDtKuQ9z3nenJyEYZ1xwASWwKygFBGzaLrFb_bK3vAOl9V1y1g32q3DQVJVxeHcJnfbfLu77NuMfJVCf1KNZ5bPJFcO9zCfKsmEBHSyuuIW1RMPM7ApLa5FjA7opQBbMw28sdjAD2FIeQQ8aTEsqSg1pE9pI4GGgBTjDpikpwSHMJUcnlILJXLCmjIU8h0QwVXFoBBDO-d6XchgDiqgEYvZnhzq9Zz7CxUQzD_aEZ_QLvtgxHJD2Aq0OY34BwxQoEY2jHIFpPUURiBXQd8DdyQ-B--xtw9fDnx1WG4aUGOgGDWnCazwk9wP4XQj5eHXr4a-jK8PXrHWfeSLHjnX0Zx01JYCqzyYi7wP9bFwC4l0oZSAEoEXO4EGPD5LU-kDPH5UOd9SfJJa6X8eGSsVc9Ks6xOmfkG6hs0JYgJXbCPBtE-D3-iLCVGb8JIJqbFgwjbTlMT2bkJyP76hzNYkBvpjI5fUXULUt8c?type=png)
+### Backend
 
-## Installation
+- **WebSocket Server**: Built with Node.js and Socket.IO for real-time communication
+- **Kafka Consumer**: Listens for element updates from the QTO plugin
+- **Kafka Producer**: Publishes cost calculations for consumption by other modules
+- **MongoDB Connector**: Handles database operations for storing and retrieving cost data
+- **Excel Parser**: Extracts unit cost data from uploaded Excel spreadsheets
+
+### Frontend
+
+- **React/TypeScript** with a component-based architecture
+- **Excel Upload Component**: For importing unit costs
+- **Cost Table**: Interactive display of costs with filtering capabilities
+- **EBKP Structure View**: Hierarchical cost breakdown by building element classification
+- **Project Summary Dashboard**: Visualizes total costs and breakdowns by category
+
+### Data Flow
+
+1. Elements are received from the QTO plugin
+2. Unit costs are imported by users through Excel upload
+3. Costs are calculated by matching elements with appropriate unit costs
+4. Results are stored in MongoDB and published to Kafka
+5. Other modules (e.g., Dashboard) can retrieve and use cost data
+
+## 🚀 Installation
 
 ### Prerequisites
 
@@ -24,20 +67,25 @@ A cost calculation plugin for building elements, allowing extraction of cost dat
 
 ### Setup
 
-The plugin-cost module is designed to integrate with the main NHM docker-compose environment. It relies on the shared MongoDB and Kafka services defined in the root docker-compose.yml.
+The plugin-cost module is designed to integrate with the main NHMzh docker-compose environment. It relies on the shared MongoDB and Kafka services defined in the root docker-compose.yml.
 
-1. Ensure the main docker-compose.yml includes the cost-websocket and cost-frontend services
-2. Run the entire NHM environment:
+1. Clone the repository:
 
 ```bash
-cd _NHMzh
+git clone https://github.com/LTplus-AG/NHMzh-plugin-cost.git
+cd NHMzh-plugin-cost
+```
+
+2. Run the entire NHMzh environment:
+
+```bash
 docker-compose up -d
 ```
 
 For local development outside Docker:
 
 ```bash
-cd plugin-cost
+cd NHMzh-plugin-cost
 npm install
 npm run dev
 
@@ -46,38 +94,34 @@ npm install
 npm run dev
 ```
 
-### Kafka Topic Setup
+## 📡 Kafka Topics
 
-This plugin requires several Kafka topics to be created. Use the provided scripts to create them:
+The Cost plugin's Kafka integration:
 
-**Linux/macOS:**
+- **Consumes** element data from the QTO plugin
+- **Publishes** enhanced elements with cost information 
 
-```bash
-# Make the script executable
-chmod +x setup-kafka.sh
-# Run the setup script
-./setup-kafka.sh
+When cost calculations are performed, the plugin sends enhanced element data with cost fields:
+
+```json
+{
+  "id": "element-id",
+  "element_id": "element-id",
+  "project": "Project Name",
+  "filename": "model.ifc",
+  "cost_unit": 100,
+  "cost": 1000
+  // Original element properties from QTO are spread here
+}
 ```
 
-**Windows:**
+The message includes the original element properties from QTO with the addition of cost-specific fields, allowing downstream systems to use both geometric and cost data together.
 
-```cmd
-# Run the Windows batch file
-setup-kafka.bat
-```
-
-These scripts will automatically find the Kafka broker container, copy the topic creation script into it, and execute it.
-
-## MongoDB Integration
+## 💾 Data Models
 
 The plugin uses the shared MongoDB instance for persistent storage of cost data. The following collections are created in the `cost` database:
 
-- `costData`: Stores cost calculations for each building element
-- `costSummaries`: Stores aggregated cost data per project
-
-### Schema Design
-
-Cost Data schema:
+### Cost Data Schema
 
 ```javascript
 {
@@ -95,7 +139,7 @@ Cost Data schema:
 }
 ```
 
-Cost Summary schema:
+### Cost Summary Schema
 
 ```javascript
 {
@@ -115,7 +159,7 @@ Cost Summary schema:
 }
 ```
 
-## API Endpoints
+## 🔌 API Endpoints
 
 The WebSocket backend provides the following HTTP endpoints:
 
@@ -128,7 +172,7 @@ The WebSocket backend provides the following HTTP endpoints:
 - `GET /costs`: Available unit costs
 - `GET /reapply_costs`: Recalculate costs for all elements
 
-## WebSocket Events
+## 📡 WebSocket Events
 
 The WebSocket server handles the following events:
 
@@ -138,12 +182,26 @@ The WebSocket server handles the following events:
 - `element_update`: Server informs about new elements
 - `cost_data_response`: Server response to Excel upload
 
-## Integration with other plugins
+## 🔗 Integration
 
-- Receives elements from the QTO Plugin via Kafka
-- Sends cost calculations to the LCA Plugin via Kafka
-- Stores and retrieves data from the shared MongoDB instance
+The Cost plugin integrates with other NHMzh modules:
 
-## License
+- **QTO Plugin**: Receives element data and quantities via Kafka (see [NHMzh-plugin-qto](https://github.com/LTplus-AG/NHMzh-plugin-qto))
+- **LCA Plugin**: Sends cost data for economic-environmental assessments (see [NHMzh-plugin-lca](https://github.com/LTplus-AG/NHMzh-plugin-lca))
+- **Central Database**: Uses shared MongoDB for data persistence
 
-This project is licensed under the terms of the MIT license.
+## 🛠️ Tech Stack
+
+- **Node.js** - Server-side JavaScript runtime
+- **WebSockets** - Real-time communication
+- **MongoDB** - Document database
+- **Kafka** - Message broker
+- **Docker** - Containerization
+
+## 📄 License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+GNU Affero General Public License v3.0 (AGPL-3.0): This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+See <https://www.gnu.org/licenses/agpl-3.0.html> for details.
