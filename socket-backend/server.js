@@ -321,7 +321,6 @@ const server = http.createServer((req, res) => {
             new Date().toISOString(), // Fallback timestamp
         };
 
-
         // 2. Directly query the qto.elements collection using the projectId
         elements = await qtoDb
           .collection("elements")
@@ -342,7 +341,6 @@ const server = http.createServer((req, res) => {
             `Skipped ${pendingCount} QTO elements with pending status for project ${projectName}`
           );
         }
-
 
         res.writeHead(200, { "Content-Type": "application/json" });
         // Return the new structure with modelMetadata and elements
@@ -371,7 +369,6 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ error: "MongoDB is not enabled" }));
       return;
     }
-
 
     // Try to get project cost data directly using project name
     (async () => {
@@ -454,7 +451,6 @@ const server = http.createServer((req, res) => {
           costSummary.elements_count > 0 &&
           costSummary.total_from_elements === 0
         ) {
-
           // Get all cost elements and manually calculate total
           const costElements = await costDb
             .collection("costElements")
@@ -942,7 +938,6 @@ const server = http.createServer((req, res) => {
           }
 
           if (replaceExisting) {
-
             const deleteResult = await costDb
               .collection("costData")
               .deleteMany({
@@ -1140,7 +1135,6 @@ function setupHeartbeat(ws, clientId) {
 
 // Interval to ping clients and terminate dead connections
 const heartbeatInterval = setInterval(() => {
-
   clients.forEach((ws, clientId) => {
     if (ws.isAlive === false) {
       ws.terminate();
@@ -1150,7 +1144,7 @@ const heartbeatInterval = setInterval(() => {
 
     ws.isAlive = false;
     try {
-      ws.ping("", false, true);
+      ws.ping("", false);
     } catch (error) {
       console.error(`Error pinging client ${clientId}:`, error.message);
       ws.terminate();
@@ -1231,8 +1225,6 @@ wss.on("connection", async (ws, req) => {
           return; // Stop if DB connection failed
         }
 
-
-
         try {
           // Find the project ID first
           const qtoProject = await qtoDb.collection("projects").findOne({
@@ -1274,7 +1266,6 @@ wss.on("connection", async (ws, req) => {
             costDataResult.deletedCount +
             costElementsResult.deletedCount +
             costSummariesResult.deletedCount;
-
 
           // Send success response
           ws.send(
@@ -1410,7 +1401,6 @@ wss.on("connection", async (ws, req) => {
             // Get elements and unit costs
             const elementsList = Object.values(ifcElementsByEbkph).flat();
 
-
             // Process matches (will use cache if available)
             const matches = await batchProcessCodeMatches(
               elementsList,
@@ -1483,7 +1473,6 @@ wss.on("connection", async (ws, req) => {
           return;
         }
 
-
         try {
           // Call the MongoDB function to save the batch directly
           // This function already handles creating/finding the project and elements
@@ -1492,7 +1481,6 @@ wss.on("connection", async (ws, req) => {
             projectName,
             sendEnhancedElementToKafka
           );
-
 
           // Send success response
           ws.send(
@@ -1541,7 +1529,6 @@ wss.on("connection", async (ws, req) => {
           );
           return;
         }
-
 
         try {
           // Define the helper function to accept the Kafka sender
@@ -1650,7 +1637,6 @@ wss.on("connection", async (ws, req) => {
           );
           return;
         }
-
 
         try {
           // Connect to MongoDB and get database references
@@ -1809,7 +1795,6 @@ wss.on("connection", async (ws, req) => {
                 .bulkWrite(bulkOps);
               upsertedCount = bulkResult.upsertedCount;
               modifiedCount = bulkResult.modifiedCount;
-
             } else {
               console.log("No valid Excel items to upsert (update mode).");
             }
@@ -1907,8 +1892,8 @@ function broadcast(message) {
 // Check if Kafka topic exists or create it
 async function ensureTopicExists(topic) {
   try {
-    // Connect to the admin client
-    await admin.connect();
+    // Don't connect the admin client here, just use the existing connection
+    // when this is called from run()
 
     // List existing topics
     const topics = await admin.listTopics();
@@ -1924,22 +1909,49 @@ async function ensureTopicExists(topic) {
   } catch (error) {
     console.error(`Error checking/creating Kafka topic: ${error.message}`);
     return false;
-  } finally {
-    await admin.disconnect();
   }
+  // Don't disconnect admin here, let the caller manage the connection
 }
 
 // Start Kafka consumer and connect to WebSocket
 async function run() {
   let adminConnected = false;
   try {
-    // 1. Connect Admin and Ensure Topics
+    // 1. Connect Admin ONCE and create both topics
     await admin.connect();
     adminConnected = true;
-    await ensureTopicExists(config.kafka.topic); // Note: ensureTopicExists connects/disconnects admin internally
-    await ensureTopicExists(config.kafka.costTopic); // Note: ensureTopicExists connects/disconnects admin internally
-    // No need to disconnect admin here as ensureTopicExists does it.
-    adminConnected = false; // Mark as disconnected after use
+    console.log(`Connected to Kafka admin on broker: ${config.kafka.broker}`);
+
+    // Create both topics in a single admin session
+    const topics = await admin.listTopics();
+    const topicsToCreate = [];
+
+    if (!topics.includes(config.kafka.topic)) {
+      topicsToCreate.push({
+        topic: config.kafka.topic,
+        numPartitions: 1,
+        replicationFactor: 1,
+      });
+    }
+
+    if (!topics.includes(config.kafka.costTopic)) {
+      topicsToCreate.push({
+        topic: config.kafka.costTopic,
+        numPartitions: 1,
+        replicationFactor: 1,
+      });
+    }
+
+    if (topicsToCreate.length > 0) {
+      await admin.createTopics({ topics: topicsToCreate });
+      console.log(
+        `Created Kafka topics: ${topicsToCreate.map((t) => t.topic).join(", ")}`
+      );
+    }
+
+    // Disconnect admin when done with topic creation
+    await admin.disconnect();
+    adminConnected = false;
 
     // 2. Connect Cost Producer
     await costProducer.connect();
@@ -1962,7 +1974,6 @@ async function run() {
         try {
           const messageValue = message.value?.toString();
           if (messageValue) {
-
             let messageData;
             try {
               // Attempt to parse the message
@@ -2192,7 +2203,6 @@ async function sendEnhancedElementToKafka(
   const messageKey = meta.fileId;
 
   try {
-
     await costProducer.send({
       topic: config.kafka.costTopic,
       messages: [{ value: JSON.stringify(costMessage), key: messageKey }],
@@ -2290,7 +2300,6 @@ async function sendBatchElementsToKafka(
   const messageKey = meta.fileId;
 
   try {
-
     await costProducer.send({
       topic: config.kafka.costTopic,
       messages: [{ value: JSON.stringify(costMessage), key: messageKey }],
@@ -2326,7 +2335,6 @@ async function sendCostElementsToKafka(elements, kafkaMetadata) {
     );
     return { success: false, count: 0 };
   }
-
 
   // Process in batches using sendBatchElementsToKafka
   const BATCH_SIZE = 1000; // Increased batch size
@@ -2488,7 +2496,6 @@ async function sendBatchElementsToKafka(
 
 // Handle server shutdown
 const shutdown = async () => {
-
   // Clear intervals
   clearInterval(heartbeatInterval);
 
@@ -2533,29 +2540,31 @@ server.listen(config.websocket.port, async () => {
     console.log("Loading initial elements from QTO DB after server start...");
     // Call the new function to load elements right after connecting DB
     await loadInitialElementsFromQtoDb();
-
   } catch (error) {
     console.error("Error loading elements from MongoDB:", error);
   }
 
-  // Start the Kafka connection and ensure topics exist
-  run().catch(console.error);
+  // Start the Kafka connection and ensure topics exist - single initialization point
+  try {
+    await run();
+    console.log("Kafka initialization complete");
+  } catch (err) {
+    console.error("Error during Kafka initialization:", err);
 
-  // Ensure the cost topic exists and connect cost producer
-  ensureTopicExists(config.kafka.costTopic)
-    .then(() => {
-      return costProducer.connect();
-    })
-    .then(() => console.log("Cost producer connected to Kafka"))
-    .catch((err) => console.error("Error connecting cost producer:", err));
+    // Try to connect just the producer if the main init failed
+    if (!costProducerConnected) {
+      try {
+        await costProducer.connect();
+        costProducerConnected = true;
+        console.log("Cost producer connected to Kafka");
+      } catch (producerErr) {
+        console.error("Error connecting cost producer:", producerErr);
+      }
+    }
+  }
 
   // Start sending test messages if Kafka is not available
   setTimeout(sendTestMessage, 10000); // Start after 10 seconds
-
-  // Set up periodic save
-  // setInterval(() => {
-  //   saveElementsToFile(); // Function not defined
-  // }, config.storage.saveInterval);
 });
 
 // Normalize EBKPH code (used for matching)
@@ -2600,7 +2609,6 @@ function broadcastElementUpdate() {
   };
 
   broadcast(JSON.stringify(elementInfo));
-
 }
 
 // Add a function to broadcast cost match information for a single code
@@ -2692,15 +2700,12 @@ async function batchProcessCodeMatches(
   const matches = [];
   const processedCodes = new Set();
 
-
-
   // Create a map of normalized codes for faster lookup
   const normalizedCostCodes = new Map();
   Object.entries(unitCosts).forEach(([code, costInfo]) => {
     const normalizedCode = normalizeEbkpCode(code);
     normalizedCostCodes.set(normalizedCode, { code, costInfo });
   });
-
 
   // Process all elements at once
   for (const element of elements) {
@@ -2748,7 +2753,6 @@ async function batchProcessCodeMatches(
       processedCodes.add(ebkpCode);
     }
   }
-
 
   // Cache the results
   cachedMatches = matches;
@@ -2903,7 +2907,6 @@ async function loadInitialElementsFromQtoDb() {
     });
 
     console.log(`Total elements tracked (by ID): ${processedElementIds.size}.`);
-
   } catch (error) {
     console.error("Error loading initial elements from QTO DB:", error);
   }
