@@ -2252,7 +2252,7 @@ async function sendCostElementsToKafka(elements, kafkaMetadata) {
   );
 
   // Process in batches using sendBatchElementsToKafka
-  const BATCH_SIZE = 100;
+  const BATCH_SIZE = 1000; // Increased batch size
   let totalSent = 0;
   for (let i = 0; i < elements.length; i += BATCH_SIZE) {
     const batch = elements.slice(i, i + BATCH_SIZE);
