@@ -27,6 +27,10 @@ import DownloadIcon from "@mui/icons-material/Download";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { CostItem } from "./CostUploader/types";
 import { useKafka } from "../contexts/KafkaContext";
+import ProjectMetadataDisplay, {
+  CostProjectMetadata,
+} from "./ui/ProjectMetadataDisplay";
+import { MongoElement } from "../types/common.types"; // Corrected Import Path for MongoElement
 
 // Define a type for cost file info
 type CostFileInfo = {
@@ -34,52 +38,6 @@ type CostFileInfo = {
   date: string | null;
   status: string | null;
 };
-
-// MongoDB element data structure
-interface MongoElement {
-  _id: string;
-  project_id: string;
-  ifc_id?: string;
-  global_id?: string;
-  ifc_class?: string;
-  name?: string;
-  type_name?: string;
-  element_type?: string;
-  level?: string;
-  quantity?: {
-    value: number;
-    type: string;
-    unit: string;
-  };
-  original_quantity?: {
-    value: number;
-    type: string;
-  };
-  quantity_value?: number;
-  is_structural?: boolean;
-  is_external?: boolean;
-  classification?: {
-    id: string;
-    name: string;
-    system: string;
-  };
-  materials?: Array<{
-    name: string;
-    unit?: string;
-    volume?: number;
-    fraction?: number;
-  }>;
-  properties: {
-    category?: string;
-    level?: string;
-    area?: number;
-    is_structural?: boolean;
-    is_external?: boolean;
-    ebkph?: string;
-  };
-  created_at: string;
-  updated_at: string;
-}
 
 // Project data with real name mapping - CHANGED: Now fetched from API
 interface Project {
@@ -125,6 +83,10 @@ const MainPage = () => {
   const [uploadedCostData, setUploadedCostData] = useState<CostItem[] | null>(
     null
   );
+
+  // NEW State for Model Metadata
+  const [modelMetadata, setModelMetadata] =
+    useState<CostProjectMetadata | null>(null);
 
   const { backendUrl } = useKafka();
 
@@ -206,10 +168,12 @@ const MainPage = () => {
         setElementsByCategory({});
         setElementsByEbkp({});
         setLoadingElements(false);
+        setModelMetadata(null); // Clear metadata if no project
         return [];
       }
 
       setLoadingElements(true);
+      setModelMetadata(null); // Clear previous metadata while loading new
 
       try {
         const encodedProjectName = encodeURIComponent(projectName);
@@ -234,9 +198,24 @@ const MainPage = () => {
 
         const data = await response.json();
         const elements = Array.isArray(data) ? data : data.elements || [];
+        const modelMetadata = data.modelMetadata || null;
 
         if (elements && elements.length > 0) {
           setCurrentElements(elements);
+
+          if (modelMetadata && modelMetadata.filename) {
+            setModelMetadata({
+              filename: modelMetadata.filename,
+              element_count: elements.length,
+              upload_timestamp: modelMetadata.timestamp,
+            });
+          } else {
+            setModelMetadata({
+              filename: selectedProject || "Unbekanntes Modell",
+              element_count: elements.length,
+              upload_timestamp: new Date().toISOString(),
+            });
+          }
 
           const categoryCounts: Record<string, number> = {};
           const ebkpCounts: Record<string, number> = {};
@@ -260,6 +239,7 @@ const MainPage = () => {
           setCurrentElements([]);
           setElementsByCategory({});
           setElementsByEbkp({});
+          setModelMetadata(null); // No elements, no metadata
           return [];
         }
       } catch (error) {
@@ -267,12 +247,13 @@ const MainPage = () => {
         setCurrentElements([]);
         setElementsByCategory({});
         setElementsByEbkp({});
+        setModelMetadata(null); // Error, clear metadata
         return [];
       } finally {
         setLoadingElements(false);
       }
     },
-    [backendUrl] // Depend only on backendUrl
+    [backendUrl, selectedProject] // Depend only on backendUrl and selectedProject
   );
 
   // Fetch the list of projects when the component mounts or backendUrl changes
@@ -319,7 +300,8 @@ const MainPage = () => {
       setCurrentElements([]);
       setElementsByCategory({});
       setElementsByEbkp({});
-      console.log("Selected project is empty, cleared elements.");
+      setModelMetadata(null); // Clear metadata if project is deselected
+      console.log("Selected project is empty, cleared elements and metadata.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject]); // Depend only on selectedProject (fetchElementsForProject is stable due to useCallback)
@@ -749,15 +731,28 @@ const MainPage = () => {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                mb: 6,
+                mb: 2, // Reduced margin as metadata is smaller
+                minHeight: "40px", // Ensure space for metadata or button
               }}
             >
-              {!costFileInfo.fileName && (
-                <Typography variant="h2" className="text-5xl">
-                  Kostendaten hochladen
-                </Typography>
+              {selectedProject && (
+                <ProjectMetadataDisplay
+                  metadata={modelMetadata}
+                  loading={loadingElements && !modelMetadata} // Show loading only if elements are loading AND metadata isn't set yet
+                />
               )}
 
+              {/* Conditionally show title if no project is selected, or if metadata is not the primary focus yet */}
+              {!selectedProject &&
+                !costFileInfo.fileName &&
+                projectsList.length > 0 && (
+                  <Typography variant="h2" className="text-5xl">
+                    Kostendaten hochladen
+                  </Typography>
+                )}
+
+              {/* "Kosten-Template herunterladen" Button */}
+              {/* Show if no cost file is uploaded, and ensure it's on the right if metadata is shown */}
               {!costFileInfo.fileName && (
                 <Button
                   variant="outlined"
@@ -765,6 +760,9 @@ const MainPage = () => {
                   size="medium"
                   startIcon={<DownloadIcon />}
                   onClick={handleTemplateDownload}
+                  sx={{
+                    ml: selectedProject && modelMetadata ? "auto" : undefined, // Pushes to the right if metadata is present
+                  }}
                 >
                   Kosten-Template herunterladen
                 </Button>
@@ -776,6 +774,7 @@ const MainPage = () => {
               <CostUploader
                 onFileUploaded={handleCostFileUploaded}
                 totalElements={currentElements.length}
+                bimElements={currentElements}
                 calculatedTotalCost={calculatedTotalCost}
                 projectName={selectedProject}
                 elementsComponent={
