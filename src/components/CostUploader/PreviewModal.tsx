@@ -459,12 +459,15 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
     groupedMatches[group].push(match);
   });
 
-  // Calculate stats for the preview
-  const totalElementsToUpdate = elementInfo ? elementInfo.elementCount : 0;
-  const matchedCodes = new Set(
-    potentialMatches.map((m) => normalizeEbkpCode(m.code))
-  );
+  // Helper function to get color based on percentage
+  const getColorByPercentage = (percentage: number) => {
+    if (percentage >= 70) return "#4caf50"; // Green
+    if (percentage >= 40) return "#2196f3"; // Blue
+    if (percentage >= 20) return "#ff9800"; // Orange
+    return "#f44336"; // Red
+  };
 
+  // Calculate stats for the preview - UPDATED
   // Get unique Excel codes (normalized)
   const uniqueExcelCodes = new Set(
     allCostItems
@@ -472,12 +475,128 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       .map((item) => normalizeEbkpCode(item.ebkp))
   );
 
-  const totalCodesWithMatches = matchedCodes.size;
-  const totalCodesInExcel = uniqueExcelCodes.size;
-  const matchPercentage =
+  // Count systems vs. building elements
+  const systemCodes = allCostItems
+    .filter(
+      (item) =>
+        item.ebkp?.startsWith("D") &&
+        (item.einheit === "Stk." ||
+          item.einheit === "Stück" ||
+          item.einheit === "Stk")
+    )
+    .map((item) => normalizeEbkpCode(item.ebkp || ""));
+
+  const systemCodesSet = new Set(systemCodes);
+
+  // Calculate building elements (non-system items)
+  const buildingElementCodes = new Set(
+    Array.from(uniqueExcelCodes).filter((code) => !systemCodesSet.has(code))
+  );
+
+  // Get the total count of relevant Excel codes
+  const totalCodesInExcel = buildingElementCodes.size; // Only count building elements, not systems
+
+  // First, get the matches that pass our filter criteria
+  const matchesWithCosts = potentialMatches.filter((match) => {
+    // Skip system items (D codes with "Stk." unit)
+    if (
+      match.excelItem?.ebkp?.startsWith("D") &&
+      (match.excelItem.einheit === "Stk." ||
+        match.excelItem.einheit === "Stück" ||
+        match.excelItem.einheit === "Stk")
+    ) {
+      return false;
+    }
+
+    return match.costUnit > 0 && match.elementCount > 0;
+  });
+
+  // Count the actual number of BIM elements that will be updated (summing elementCount)
+  const totalElementsToUpdate = matchesWithCosts.reduce(
+    (sum, match) => sum + match.elementCount,
+    0
+  );
+
+  // Only count unique eBKP codes that got quantities from BIM mapping
+  const actualMatchedCodes = new Set(
+    matchesWithCosts.map((match) =>
+      normalizeEbkpCode(match.excelItem?.ebkp || "")
+    )
+  );
+
+  // Count direct matches - Excel codes that exactly match BIM codes
+  const directMatchCount = potentialMatches.filter(
+    (m) => normalizeEbkpCode(m.excelItem?.ebkp) === normalizeEbkpCode(m.code)
+  ).length;
+
+  const totalCodesWithMatches = actualMatchedCodes.size;
+
+  // Calculate different metrics to express matching quality
+
+  // 1. EBKP code match rate - how many Excel codes were matched with BIM
+  const codeMatchPercentage =
     totalCodesInExcel > 0
       ? Math.round((totalCodesWithMatches / totalCodesInExcel) * 100)
       : 0;
+
+  // 2. BIM coverage - proportion of BIM elements that will receive costs
+  const totalAvailableElements = elementInfo ? elementInfo.elementCount : 0;
+  const bimCoveragePercentage =
+    totalAvailableElements > 0
+      ? Math.round((totalElementsToUpdate / totalAvailableElements) * 100)
+      : 0;
+
+  // 3. Unique BIM code coverage - proportion of unique BIM codes that were matched
+  const uniqueBimCodes = new Set(
+    potentialMatches.map((m) => normalizeEbkpCode(m.code))
+  );
+  const uniqueBimCodeCount = uniqueBimCodes.size;
+  const bimCodeCoveragePercentage =
+    uniqueBimCodeCount > 0
+      ? Math.round((totalCodesWithMatches / uniqueBimCodeCount) * 100)
+      : 0;
+
+  // 4. Direct match quality - percentage of matches that are direct (not fuzzy)
+  const directMatchPercentage =
+    potentialMatches.length > 0
+      ? Math.round((directMatchCount / potentialMatches.length) * 100)
+      : 0;
+
+  // 5. Overall matching quality score - weighted average of the above metrics
+  // Giving more weight to code matches and direct matches
+  const matchingQualityScore = Math.round(
+    codeMatchPercentage * 0.4 +
+      bimCoveragePercentage * 0.3 +
+      bimCodeCoveragePercentage * 0.1 +
+      directMatchPercentage * 0.2
+  );
+
+  // We'll use this as our main quality indicator
+  const matchPercentage = codeMatchPercentage;
+  const elementPercentage = bimCoveragePercentage;
+  const medianPercentage = matchingQualityScore;
+
+  // DEBUG: Count codes by first letter
+  const firstLetterCounts: Record<string, number> = {};
+  uniqueExcelCodes.forEach((code) => {
+    const firstChar = code.charAt(0);
+    firstLetterCounts[firstChar] = (firstLetterCounts[firstChar] || 0) + 1;
+  });
+
+  // Log detailed statistics to console for debugging
+  console.log("Match statistics (detailed):", {
+    totalCodesWithMatches, // Number of Excel codes with BIM matches
+    totalCodesInExcel, // Total number of Excel codes (excluding system items)
+    codeMatchPercentage, // % of Excel codes matched with BIM
+    totalElementsToUpdate, // Number of BIM elements that will receive costs
+    totalAvailableElements, // Total number of BIM elements available
+    bimCoveragePercentage, // % of BIM elements covered
+    uniqueBimCodeCount, // Number of unique BIM codes
+    bimCodeCoveragePercentage, // % of unique BIM codes covered
+    directMatchCount, // Number of direct (exact) matches
+    directMatchPercentage, // % of matches that are direct
+    matchingQualityScore, // Overall quality score
+  });
 
   // Corrected costByGroup calculation
   const costByGroup = useMemo(() => {
@@ -502,7 +621,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
     leafItems.forEach((item) => {
       if (!item.ebkp) return; // Skip leaf items without eBKP
 
-      // Determine the group key (e.g., C, B, C01, B06, etc. - use the item's own ebkp as the key for the chip list)
+      // Determine the group key (use the item's own ebkp)
       const groupKey = item.ebkp;
 
       if (!groups[groupKey]) {
@@ -511,7 +630,15 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       // Sum the final chf of this leaf item
       groups[groupKey] += item.chf || item.totalChf || 0;
     });
-    return groups;
+
+    // Filter out zero values before returning
+    const filteredGroups: { [key: string]: number } = {};
+    for (const [key, value] of Object.entries(groups)) {
+      if (value > 0) {
+        filteredGroups[key] = value;
+      }
+    }
+    return filteredGroups;
   }, [metaFile]); // Depend on metaFile
 
   // Return the data when confirmed
@@ -618,7 +745,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
           Kosten-Update Vorschau
         </Typography>
         <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-          Überprüfen Sie die Kostenübertragung, bevor Sie die Daten übermitteln
+          Überprüfen Sie die Kostenermittlung, bevor Sie die Daten übermitteln
         </Typography>
 
         <Tabs
@@ -651,19 +778,29 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                 <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
                   <Grid container spacing={3}>
                     <Grid item xs={12} md={6}>
-                      <Box display="flex" alignItems="center" mb={2} mt={1.5}>
+                      <Typography
+                        variant="subtitle1"
+                        gutterBottom
+                        fontWeight="medium"
+                      >
+                        Zuordnung BIM-zu-Excel
+                      </Typography>
+
+                      <Box display="flex" alignItems="center" mb={2}>
                         <Box
                           sx={{
                             display: "flex",
                             alignItems: "center",
-                            backgroundColor: "#fff9e6",
-                            borderRadius: "999px",
+                            backgroundColor: "#f5f5f5",
+                            borderRadius: "8px",
                             position: "relative",
                             overflow: "hidden",
-                            padding: "6px 16px",
+                            padding: "8px 16px",
                             mr: 1.5,
-                            boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                            border: "1px solid #ffd580",
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                            border: "1px solid #e0e0e0",
+                            width: "240px",
+                            height: "36px",
                           }}
                         >
                           <Box
@@ -673,7 +810,9 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                               top: 0,
                               height: "100%",
                               width: `${matchPercentage}%`,
-                              backgroundColor: "#ffb74d",
+                              backgroundColor:
+                                getColorByPercentage(matchPercentage),
+                              opacity: 0.7,
                               zIndex: 0,
                             }}
                           />
@@ -682,31 +821,35 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                             sx={{
                               position: "relative",
                               zIndex: 1,
-                              color: "#e65100",
+                              color: "#333",
                               fontSize: "0.95rem",
                             }}
                           >
                             {totalCodesWithMatches}/{totalCodesInExcel} eBKP
-                            Elementgruppen
+                            Codes
                           </Typography>
                         </Box>
-                        <Typography>mit BIM verknüpft</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          mit BIM verknüpft ({matchPercentage}%)
+                        </Typography>
                       </Box>
 
                       {elementInfo && (
-                        <Box display="flex" alignItems="center" mb={2} mt={1.5}>
+                        <Box display="flex" alignItems="center" mb={2}>
                           <Box
                             sx={{
                               display: "flex",
                               alignItems: "center",
-                              backgroundColor: "#fff9e6",
-                              borderRadius: "999px",
+                              backgroundColor: "#f5f5f5",
+                              borderRadius: "8px",
                               position: "relative",
                               overflow: "hidden",
-                              padding: "6px 16px",
+                              padding: "8px 16px",
                               mr: 1.5,
-                              boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                              border: "1px solid #ffd580",
+                              boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                              border: "1px solid #e0e0e0",
+                              width: "240px",
+                              height: "36px",
                             }}
                           >
                             <Box
@@ -715,15 +858,10 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                                 left: 0,
                                 top: 0,
                                 height: "100%",
-                                width: `${Math.min(
-                                  100,
-                                  Math.round(
-                                    (totalElementsToUpdate /
-                                      elementInfo.elementCount) *
-                                      100
-                                  )
-                                )}%`,
-                                backgroundColor: "#4caf50",
+                                width: `${elementPercentage}%`,
+                                backgroundColor:
+                                  getColorByPercentage(elementPercentage),
+                                opacity: 0.7,
                                 zIndex: 0,
                               }}
                             />
@@ -732,16 +870,141 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                               sx={{
                                 position: "relative",
                                 zIndex: 1,
-                                color: "#e65100",
+                                color: "#333",
                                 fontSize: "0.95rem",
                               }}
                             >
-                              {totalElementsToUpdate}/{elementInfo.elementCount}{" "}
+                              {totalElementsToUpdate}/{totalAvailableElements}{" "}
                               BIM Elemente
                             </Typography>
                           </Box>
-                          <Typography>zugeordnet</Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            zugeordnet ({elementPercentage}%)
+                          </Typography>
                         </Box>
+                      )}
+
+                      {/* Move Übereinstimmungsqualität here */}
+                      <Typography
+                        variant="subtitle1"
+                        fontWeight="bold"
+                        sx={{ mt: 3, mb: 1 }}
+                      >
+                        Übereinstimmungsqualität
+                      </Typography>
+
+                      <Box
+                        sx={{
+                          width: "100%",
+                          mb: 2,
+                          position: "relative",
+                          height: 30,
+                        }}
+                      >
+                        {/* Background bar */}
+                        <Box
+                          sx={{
+                            position: "absolute",
+                            left: 0,
+                            top: 0,
+                            height: "100%",
+                            width: "100%",
+                            backgroundColor: "#eee",
+                            borderRadius: 1,
+                          }}
+                        />
+
+                        {/* Progress bar */}
+                        <Box
+                          sx={{
+                            position: "absolute",
+                            left: 0,
+                            top: 0,
+                            height: "100%",
+                            width: `${medianPercentage}%`,
+                            backgroundColor:
+                              getColorByPercentage(medianPercentage),
+                            borderRadius: 1,
+                            transition: "width 1s ease-in-out",
+                          }}
+                        />
+
+                        {/* Percentage text */}
+                        <Box
+                          sx={{
+                            position: "absolute",
+                            left: 0,
+                            top: 0,
+                            height: "100%",
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Typography fontWeight="bold" color="text.secondary">
+                            {medianPercentage}% Übereinstimmung
+                          </Typography>
+                        </Box>
+                      </Box>
+
+                      <Box display="flex" flexWrap="wrap" gap={1} mt={2}>
+                        {potentialMatches.length > 0 && (
+                          <>
+                            <Tooltip title="Direkte Übereinstimmungen mit BIM Elementen">
+                              <Chip
+                                icon={<CheckCircleIcon />}
+                                label={`${
+                                  potentialMatches.filter(
+                                    (m) =>
+                                      normalizeEbkpCode(m.excelItem?.ebkp) ===
+                                      normalizeEbkpCode(m.code)
+                                  ).length
+                                } Direkte Übereinstimmungen`}
+                                color="success"
+                              />
+                            </Tooltip>
+
+                            <Tooltip title="Diese eBKP Elementgruppen haben keine Übereinstimmung">
+                              <Chip
+                                icon={<WarningIcon />}
+                                label={`${
+                                  totalCodesInExcel - totalCodesWithMatches
+                                } Nicht gefundene Elementgruppen`}
+                                color="warning"
+                              />
+                            </Tooltip>
+
+                            <Tooltip title="BIM Elemente mit Kosten">
+                              <Chip
+                                icon={<InfoIcon />}
+                                label={`${totalElementsToUpdate} Elemente mit Kosten`}
+                                color="primary"
+                              />
+                            </Tooltip>
+                          </>
+                        )}
+
+                        {potentialMatches.length === 0 && (
+                          <Alert severity="warning" sx={{ width: "100%" }}>
+                            <AlertTitle>
+                              Keine direkten Übereinstimmungen gefunden
+                            </AlertTitle>
+                            Die eBKP Elementgruppen in der Excel-Datei haben
+                            keine direkte Übereinstimmung mit BIM Elementen.
+                            Prüfen Sie, ob die Codes korrekt sind oder ob
+                            Formatierungsunterschiede bestehen.
+                          </Alert>
+                        )}
+                      </Box>
+
+                      {/* Display warning if low match percentage */}
+                      {medianPercentage < 30 && (
+                        <Alert severity="warning" sx={{ mt: 2 }}>
+                          <AlertTitle>Niedrige Übereinstimmung</AlertTitle>
+                          Nur {medianPercentage}% Gesamtübereinstimmung zwischen
+                          BIM und Excel-Daten.
+                        </Alert>
                       )}
                     </Grid>
 
@@ -768,136 +1031,33 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                       <Box sx={{ mt: 1 }}>
                         {Object.entries(costByGroup)
                           .sort((a, b) => b[1] - a[1])
-                          .map(([group, cost]) => (
+                          .slice(0, 15) // Limit to top 15 chips
+                          .map(([group, cost], index) => (
                             <Chip
                               key={group}
                               label={`${group}: ${cost.toLocaleString("de-CH", {
                                 maximumFractionDigits: 0,
                               })} CHF`}
                               size="small"
-                              sx={{ mr: 0.5, mb: 0.5 }}
-                              color={
-                                cost > calculatedTotalCost * 0.25
-                                  ? "primary"
-                                  : "default"
-                              }
+                              variant="outlined"
+                              color={index < 3 ? "primary" : "default"}
+                              sx={{
+                                mr: 0.5,
+                                mb: 0.5,
+                                fontWeight: index < 3 ? "bold" : "normal",
+                              }}
                             />
                           ))}
+                        {Object.keys(costByGroup).length > 15 && (
+                          <Chip
+                            label="..."
+                            size="small"
+                            sx={{ mr: 0.5, mb: 0.5 }}
+                          />
+                        )}
                       </Box>
                     </Grid>
                   </Grid>
-                </Paper>
-
-                {/* Match Quality */}
-                <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
-                  <Typography
-                    variant="subtitle1"
-                    fontWeight="bold"
-                    gutterBottom
-                  >
-                    Übereinstimmungsqualität
-                  </Typography>
-
-                  <Box
-                    sx={{
-                      width: "100%",
-                      mb: 2,
-                      position: "relative",
-                      height: 30,
-                    }}
-                  >
-                    {/* Background bar */}
-                    <Box
-                      sx={{
-                        position: "absolute",
-                        left: 0,
-                        top: 0,
-                        height: "100%",
-                        width: "100%",
-                        backgroundColor: "#eee",
-                        borderRadius: 1,
-                      }}
-                    />
-
-                    {/* Progress bar */}
-                    <Box
-                      sx={{
-                        position: "absolute",
-                        left: 0,
-                        top: 0,
-                        height: "100%",
-                        width: `${matchPercentage}%`,
-                        backgroundColor:
-                          matchPercentage > 70
-                            ? "#4caf50"
-                            : matchPercentage > 30
-                            ? "#2196f3"
-                            : "#ff9800",
-                        borderRadius: 1,
-                        transition: "width 1s ease-in-out",
-                      }}
-                    />
-
-                    {/* Percentage text */}
-                    <Box
-                      sx={{
-                        position: "absolute",
-                        left: 0,
-                        top: 0,
-                        height: "100%",
-                        width: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Typography fontWeight="bold" color="text.secondary">
-                        {matchPercentage}% Übereinstimmung
-                      </Typography>
-                    </Box>
-                  </Box>
-
-                  <Box display="flex" flexWrap="wrap" gap={1} mt={2}>
-                    {potentialMatches.length > 0 && (
-                      <>
-                        <Tooltip title="Direkte Übereinstimmungen mit BIM Elementen">
-                          <Chip
-                            icon={<CheckCircleIcon />}
-                            label={`${
-                              potentialMatches.filter(
-                                (m) =>
-                                  normalizeEbkpCode(m.excelItem?.ebkp) ===
-                                  normalizeEbkpCode(m.code)
-                              ).length
-                            } Direkte Übereinstimmungen`}
-                            color="success"
-                          />
-                        </Tooltip>
-
-                        <Tooltip title="Diese eBKP Elementgruppen haben keine Übereinstimmung">
-                          <Chip
-                            icon={<WarningIcon />}
-                            label={`${
-                              totalCodesInExcel - totalCodesWithMatches
-                            } Nicht gefundene Elementgruppen`}
-                            color="warning"
-                          />
-                        </Tooltip>
-                      </>
-                    )}
-
-                    {potentialMatches.length === 0 && (
-                      <Alert severity="warning" sx={{ width: "100%" }}>
-                        <AlertTitle>
-                          Keine direkten Übereinstimmungen gefunden
-                        </AlertTitle>
-                        Die eBKP Elementgruppen in der Excel-Datei haben keine
-                        direkte Übereinstimmung mit BIM Elementen. Prüfen Sie,
-                        ob die Codes korrekt sind oder ob
-                        Formatierungsunterschiede bestehen.
-                      </Alert>
-                    )}
-                  </Box>
                 </Paper>
               </>
             )}
@@ -1182,7 +1342,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
           color="primary"
           disabled={loading || totalElementsToUpdate === 0}
         >
-          Kosten aktualisieren ({totalElementsToUpdate} Elemente)
+          Kosten aktualisieren
         </Button>
       </DialogActions>
     </Dialog>

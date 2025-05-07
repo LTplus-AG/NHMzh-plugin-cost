@@ -148,7 +148,6 @@ const MainPage = () => {
 
       // Store the potentially processed data (always update this when callback is called)
       setProcessedCostData(dataArray);
-
     },
     [uploadedCostData] // Re-run if uploadedCostData changes (for initial set)
   );
@@ -603,8 +602,8 @@ const MainPage = () => {
                   })}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Gesamtkosten (Berechnet{" "}
-                  {processedCostData ? "nach BIM" : "aus Excel"})
+                  Kostenschätzung (Berechnet{" "}
+                  {processedCostData ? "aus IFC & Excel" : "aus Excel"})
                 </Typography>
               </Box>
             )}
