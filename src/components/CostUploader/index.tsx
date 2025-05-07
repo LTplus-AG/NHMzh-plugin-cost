@@ -13,6 +13,7 @@ import FileInfo from "./FileInfo";
 import HierarchicalTable from "./HierarchicalTable";
 import PreviewModal, { EnhancedCostItem } from "./PreviewModal";
 import BimMapper from "./BimMapper";
+import { MongoElement } from "../../types/common.types";
 
 // Define the WebSocket response interfaces
 interface BatchResponseData {
@@ -50,6 +51,7 @@ interface CostUploaderProps {
   projectName: string;
   triggerPreview?: boolean;
   onPreviewClosed?: () => void;
+  bimElements?: MongoElement[];
 }
 
 const CostUploader = ({
@@ -60,6 +62,7 @@ const CostUploader = ({
   projectName,
   triggerPreview,
   onPreviewClosed,
+  bimElements,
 }: CostUploaderProps) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
@@ -352,14 +355,24 @@ const CostUploader = ({
 
       if (response.status !== "success") {
         console.error("Error saving Excel data:", response.message);
+        setMappingMessage(
+          response.message || "Fehler beim Speichern der Excel-Daten."
+        );
         setIsLoading(false);
         return;
       }
 
       console.log("Excel data saved successfully. Proceeding to UI update.");
       handleFileProcessed(currentMetaFile);
+      setMappingMessage("Excel-Daten verarbeitet. Starte BIM-Abgleich...");
+      setIsLoading(false);
     } catch (error) {
       console.error("Error processing file upload:", error);
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Unbekannter Fehler beim Datei-Upload";
+      setMappingMessage(`Fehler: ${errorMessage}`);
       setIsLoading(false);
     }
   };
@@ -464,6 +477,7 @@ const CostUploader = ({
         onQuantitiesMapped={handleQuantitiesMapped}
         setIsLoading={setIsLoading}
         setMappingMessage={setMappingMessage}
+        ifcElements={bimElements}
       />
 
       {!metaFile ? (

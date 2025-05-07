@@ -317,7 +317,22 @@ const server = http.createServer((req, res) => {
         }
         const projectId = qtoProject._id;
         console.log(
-          `Found project ID: ${projectId} for project: ${projectName}`
+          `Found project ID: ${projectId} for project: ${projectName}, with metadata:`,
+          qtoProject.metadata
+        );
+
+        // --- Extract Model Metadata ---
+        const modelMetadata = {
+          filename: qtoProject.metadata?.filename || `${projectName}_model.ifc`, // Fallback filename
+          timestamp:
+            qtoProject.metadata?.upload_timestamp ||
+            qtoProject.metadata?.timestamp ||
+            qtoProject.updated_at?.toISOString() ||
+            new Date().toISOString(), // Fallback timestamp
+        };
+        console.log(
+          `Prepared modelMetadata for ${projectName}:`,
+          modelMetadata
         );
 
         // 2. Directly query the qto.elements collection using the projectId
@@ -346,8 +361,8 @@ const server = http.createServer((req, res) => {
         );
 
         res.writeHead(200, { "Content-Type": "application/json" });
-        // Return the elements found
-        res.end(JSON.stringify(elements));
+        // Return the new structure with modelMetadata and elements
+        res.end(JSON.stringify({ modelMetadata, elements }));
       } catch (error) {
         console.error(
           `Error getting elements (from ${sourceDb}) for project ${projectName}:`,
