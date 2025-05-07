@@ -14,6 +14,7 @@ import HierarchicalTable from "./HierarchicalTable";
 import PreviewModal, { EnhancedCostItem } from "./PreviewModal";
 import BimMapper from "./BimMapper";
 import { MongoElement } from "../../types/common.types";
+import { useCostCalculation } from "../../hooks/useCostCalculation";
 
 // Define the WebSocket response interfaces
 interface BatchResponseData {
@@ -46,7 +47,7 @@ interface CostUploaderProps {
     isUpdate?: boolean
   ) => void;
   totalElements: number;
-  calculatedTotalCost: number;
+  costData: CostItem[] | null;
   elementsComponent?: ReactNode;
   projectName: string;
   triggerPreview?: boolean;
@@ -57,7 +58,7 @@ interface CostUploaderProps {
 const CostUploader = ({
   onFileUploaded,
   totalElements,
-  calculatedTotalCost,
+  costData,
   elementsComponent,
   projectName,
   triggerPreview,
@@ -74,6 +75,17 @@ const CostUploader = ({
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [previewOpen, setPreviewOpen] = useState(false);
   const [mappedItemsCount, setMappedItemsCount] = useState(0);
+
+  useEffect(() => {
+    if (costData && metaFile?.file) {
+      setMetaFile((prev) => ({
+        ...prev!,
+        data: costData,
+      }));
+    } else if (!costData) {
+      setMetaFile(null);
+    }
+  }, [costData, metaFile?.file]);
 
   const toggleRow = (code: string) => {
     setExpandedRows((prev: Record<string, boolean>) => ({
@@ -244,25 +256,30 @@ const CostUploader = ({
         `Missing: ${result.missingHeaders?.join(", ")}`
       );
 
-      const currentMetaFile: MetaFile = {
+      const initialMetaFile: MetaFile = {
         file: file,
         data: result.data,
         headers: result.headers,
         missingHeaders: result.missingHeaders,
         valid: result.valid,
       };
-
-      if (!currentMetaFile.valid) {
-        console.error("Excel file is invalid or missing headers.");
-        setMetaFile(currentMetaFile);
-        setIsLoading(false);
-        return;
+      setMetaFile(initialMetaFile);
+      setMappedItemsCount(0);
+      setExpandedRows({});
+      if (onFileUploaded && initialMetaFile.data) {
+        onFileUploaded(
+          initialMetaFile.file.name,
+          new Date().toLocaleString("de-CH"),
+          "Vorschau",
+          initialMetaFile.data,
+          false
+        );
       }
 
       setMappingMessage("Excel-Daten werden gespeichert...");
-      const costData = Array.isArray(currentMetaFile.data)
-        ? currentMetaFile.data
-        : currentMetaFile.data.data;
+      const costData = Array.isArray(initialMetaFile.data)
+        ? initialMetaFile.data
+        : initialMetaFile.data.data;
 
       const getAllItems = (items: CostItem[]): CostItem[] => {
         let result: CostItem[] = [];
@@ -363,7 +380,7 @@ const CostUploader = ({
       }
 
       console.log("Excel data saved successfully. Proceeding to UI update.");
-      handleFileProcessed(currentMetaFile);
+      handleQuantitiesMapped(mappedItemsCount);
       setMappingMessage("Excel-Daten verarbeitet. Starte BIM-Abgleich...");
       setIsLoading(false);
     } catch (error) {
@@ -377,28 +394,32 @@ const CostUploader = ({
     }
   };
 
-  const handleFileProcessed = (processedMetaFile: MetaFile) => {
-    setMetaFile(processedMetaFile);
-    setMappedItemsCount(0);
-    setExpandedRows({});
-    if (onFileUploaded && processedMetaFile.data) {
-      const fileName = processedMetaFile.file.name;
-      const currentDate = new Date().toLocaleString("de-CH");
-      const status = "Vorschau";
-      const costData = processedMetaFile.data;
-      onFileUploaded(fileName, currentDate, status, costData, false);
-      console.log("Called parent onFileUploaded callback with preview status.");
-    } else {
-      console.log("Parent onFileUploaded callback skipped.");
-    }
-  };
+  const handleQuantitiesMapped = useCallback(
+    (mappedCount: number) => {
+      console.log(
+        `BIM quantities mapped callback received: ${mappedCount} items updated.`
+      );
+      setMappedItemsCount(mappedCount);
+      if (onFileUploaded && metaFile?.data) {
+        onFileUploaded(
+          metaFile.file.name,
+          new Date().toLocaleString("de-CH"),
+          "Vorschau",
+          metaFile.data,
+          false
+        );
+      }
+    },
+    [metaFile, onFileUploaded]
+  );
 
-  const handleQuantitiesMapped = useCallback((count: number) => {
-    console.log(
-      `BIM quantities mapped callback received: ${count} items updated`
-    );
-    setMappedItemsCount(count);
-  }, []);
+  const { totalCost: calculatedTotalCostForPreview } = useCostCalculation(
+    metaFile?.data
+      ? Array.isArray(metaFile.data)
+        ? metaFile.data
+        : metaFile.data.data
+      : null
+  );
 
   useEffect(() => {
     const handleMappingStatus = (event: BimMappingStatusEvent) => {
@@ -515,7 +536,7 @@ const CostUploader = ({
               onClose={handleClosePreviewInternal}
               onConfirm={handleConfirmPreview}
               metaFile={metaFile}
-              calculatedTotalCost={calculatedTotalCost}
+              calculatedTotalCost={calculatedTotalCostForPreview}
             />
           </div>
         </div>

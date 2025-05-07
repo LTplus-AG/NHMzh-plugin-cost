@@ -31,6 +31,7 @@ import ProjectMetadataDisplay, {
   CostProjectMetadata,
 } from "./ui/ProjectMetadataDisplay";
 import { MongoElement } from "../types/common.types"; // Corrected Import Path for MongoElement
+import { useCostCalculation } from "../hooks/useCostCalculation"; // Import the hook
 
 // Define a type for cost file info
 type CostFileInfo = {
@@ -83,6 +84,9 @@ const MainPage = () => {
   const [uploadedCostData, setUploadedCostData] = useState<CostItem[] | null>(
     null
   );
+  const [processedCostData, setProcessedCostData] = useState<CostItem[] | null>(
+    null
+  ); // State for post-BIM data
 
   // NEW State for Model Metadata
   const [modelMetadata, setModelMetadata] =
@@ -110,13 +114,13 @@ const MainPage = () => {
       fileName: string | null,
       date?: string,
       status?: string,
-      // Expect the raw data structure from CostUploader
-      costData?: CostItem[] | { data: CostItem[] } | null,
-      isUpdate?: boolean
+      costData?: CostItem[] | { data: CostItem[] } | null, // This is the UPDATED hierarchical data after BIM mapping
+      isUpdate?: boolean // This flag indicates if it's the final save (true) or just preview update (false)
     ) => {
       if (status === "Gelöscht" || !fileName) {
         setCostFileInfo({ fileName: null, date: null, status: null });
-        setUploadedCostData(null); // Clear cost data on removal
+        setUploadedCostData(null); // Clear initial data
+        setProcessedCostData(null); // Clear processed data
         console.log("Cost file info reset.");
         return;
       }
@@ -130,21 +134,29 @@ const MainPage = () => {
         status: newStatus,
       });
 
-      // Extract the array of CostItems
-      const dataArray = costData
+      // Extract the hierarchical array of CostItems
+      const dataArray: CostItem[] | null = costData
         ? Array.isArray(costData)
           ? costData
           : costData.data
         : null;
-      setUploadedCostData(dataArray);
+
+      // If this is the first time data is uploaded (not an update/final save),
+      // store it as the initial uploaded data.
+      if (!isUpdate && dataArray && !uploadedCostData) {
+        setUploadedCostData(dataArray);
+      }
+
+      // Store the potentially processed data (always update this when callback is called)
+      setProcessedCostData(dataArray);
 
       console.log(
         `Cost file info updated: ${fileName}, Status: ${newStatus}, Items: ${
           dataArray?.length ?? 0
-        }`
+        } (isUpdate: ${isUpdate})`
       );
     },
-    []
+    [uploadedCostData] // Re-run if uploadedCostData changes (for initial set)
   );
 
   // REMOVED: Unused formatCurrency function
@@ -368,32 +380,16 @@ const MainPage = () => {
     });
   };
 
-  // --- Cost Calculation (moved from CostUploader) ---
-  const calculateItemChf = useCallback((item: CostItem): number => {
-    let itemTotal = 0;
-    if (item.area !== undefined && item.kennwert !== undefined) {
-      itemTotal = item.area * item.kennwert;
-    } else if (item.totalChf !== undefined) {
-      itemTotal = item.totalChf;
-    } else if (item.menge !== undefined && item.kennwert !== undefined) {
-      itemTotal = item.menge * item.kennwert;
-    }
-    if (item.children && item.children.length > 0) {
-      return item.children.reduce(
-        (sum, child) => sum + calculateItemChf(child),
-        0
-      );
-    }
-    return itemTotal;
-  }, []);
+  // Calculate initial total from raw Excel upload
+  const { totalCost: initialExcelTotal } = useCostCalculation(uploadedCostData);
 
-  const calculatedTotalCost = useMemo(() => {
-    if (!uploadedCostData) return 0;
-    return uploadedCostData.reduce(
-      (sum, item) => sum + calculateItemChf(item),
-      0
-    );
-  }, [uploadedCostData, calculateItemChf]);
+  // Calculate final total from processed data (after BIM mapping)
+  const { totalCost: finalTotalCost } = useCostCalculation(processedCostData);
+
+  // Determine which total to display in the sidebar
+  const displayTotalInSidebar = processedCostData
+    ? finalTotalCost
+    : initialExcelTotal;
 
   // Function to render element statistics
   const renderElementStats = () => {
@@ -593,8 +589,8 @@ const MainPage = () => {
               </FormControl>
             </div>
 
-            {/* NEW: Calculated Total Cost Box */}
-            {costFileInfo.fileName && calculatedTotalCost > 0 && (
+            {/* Display Total Cost Box */}
+            {costFileInfo.fileName && displayTotalInSidebar > 0 && (
               <Box
                 sx={{
                   mt: 3, // Margin top
@@ -616,12 +612,14 @@ const MainPage = () => {
                   fontWeight="bold"
                 >
                   CHF{" "}
-                  {calculatedTotalCost.toLocaleString("de-CH", {
+                  {displayTotalInSidebar.toLocaleString("de-CH", {
+                    // Use displayTotalInSidebar
                     maximumFractionDigits: 0,
                   })}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Gesamtkosten (Berechnet)
+                  Gesamtkosten (Berechnet{" "}
+                  {processedCostData ? "nach BIM" : "aus Excel"})
                 </Typography>
               </Box>
             )}
@@ -775,8 +773,8 @@ const MainPage = () => {
                 onFileUploaded={handleCostFileUploaded}
                 totalElements={currentElements.length}
                 bimElements={currentElements}
-                calculatedTotalCost={calculatedTotalCost}
                 projectName={selectedProject}
+                costData={processedCostData || uploadedCostData}
                 elementsComponent={
                   <Box
                     sx={{

@@ -32,7 +32,7 @@ type AdaptedBimElement = MongoElement & {
 interface BimMapperProps {
   metaFile: MetaFile | null;
   projectName: string;
-  onQuantitiesMapped?: (updatedCount: number) => void;
+  onQuantitiesMapped?: (bimMappedCount: number) => void;
   setIsLoading: Dispatch<SetStateAction<boolean>>;
   setMappingMessage: Dispatch<SetStateAction<string>>;
   ifcElements?: MongoElement[];
@@ -233,25 +233,34 @@ const BimMapper = ({
           `Found ${itemsWithEbkp.length} items with eBKP codes in Excel data for mapping`
         );
         const updatedItems = mapper.mapQuantitiesToCostItems(costItems);
-        const updatedItemsCount = getAllItems(updatedItems).filter(
-          (item) =>
-            item.menge &&
-            item.menge > 0 &&
-            item.ebkp &&
-            item.areaSource === "IFC"
+
+        // It's crucial that mapQuantitiesToCostItems preserves original items if not mapped,
+        // or clearly indicates mapping status (e.g., via areaSource) and updates chf.
+        const flatAllProcessedItems = getAllItems(updatedItems);
+
+        const bimMappedCount = flatAllProcessedItems.filter(
+          (item) => item.areaSource === "IFC"
         ).length;
+
         console.log(
-          `Mapping complete: Updated ${updatedItemsCount} items with quantities from BIM model`
+          `Mapping complete: ${bimMappedCount} items updated with quantities from BIM model.`
         );
+        // If you want to log unmatched count based on the flat list:
+        // const unmatchedCount = flatAllProcessedItems.length - bimMappedCount;
+        // console.log(`${unmatchedCount} items were not directly mapped to BIM quantities (retained Excel/original values).`);
+
+        // The metaFile.data should still contain the complete list of updatedItems (hierarchical) for other consumers if needed.
         if (Array.isArray(metaFile.data)) {
           metaFile.data = updatedItems;
         } else {
           metaFile.data.data = updatedItems;
         }
+
         if (onQuantitiesMapped) {
-          onQuantitiesMapped(updatedItemsCount);
+          onQuantitiesMapped(bimMappedCount);
         }
-        if (updatedItemsCount > 0 && !dataSubmittedRef.current) {
+
+        if (bimMappedCount > 0 && !dataSubmittedRef.current) {
           setTimeout(() => {
             requestReapplyCostData().catch(() => {});
           }, 500);

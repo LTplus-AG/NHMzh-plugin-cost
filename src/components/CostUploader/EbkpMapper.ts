@@ -222,75 +222,111 @@ export class EbkpMapper {
   }
 
   /**
-   * Map quantities into cost items from the Excel file
-   */
-  mapQuantitiesToCostItems(
-    costItems: CostItem[],
-    options?: {
-      alwaysUseDbQuantities?: boolean;
-    }
-  ): CostItem[] {
-    const updatedItems = JSON.parse(JSON.stringify(costItems)) as CostItem[];
-    const opts = {
-      alwaysUseDbQuantities: true,
-      ...options,
-    };
-
-    this.processItemsRecursively(updatedItems, opts);
-    return updatedItems;
-  }
-
-  /**
-   * Process items recursively to add quantities
+   * Process items recursively. Focuses on mapping leaf nodes with exact eBKP matches.
    */
   private processItemsRecursively(
     items: CostItem[],
-    options: {
-      alwaysUseDbQuantities: boolean;
-    }
+    options: { alwaysUseDbQuantities: boolean } // Options might be less relevant now
   ): void {
     items.forEach((item) => {
-      if (item.ebkp) {
-        const totalArea = this.getTotalAreaForEbkp(item.ebkp);
-        const elements = this.getElementsForEbkp(item.ebkp);
-
-        if (item.menge && options.alwaysUseDbQuantities) {
-          if (!item.originalValues) {
-            item.originalValues = {};
-          }
-          item.originalValues.menge = item.menge;
-        }
-
-        if (options.alwaysUseDbQuantities || !item.menge || item.menge === 0) {
-          if (elements.length > 0 && totalArea > 0) {
-            item.menge = totalArea;
-            item.area = totalArea;
-            item.areaSource = "IFC";
-            item.kafkaTimestamp = new Date().toISOString();
-
-            if (elements[0]?.quantity?.type) {
-              item.quantityType = elements[0].quantity.type;
-              item.quantityUnit = elements[0].quantity.unit;
-            }
-
-            if (item.kennwert) {
-              item.chf = item.kennwert * totalArea;
-            }
-
-            item.dbElements = elements.length;
-            item.dbArea = totalArea;
-          }
-        }
-      }
-
+      // --- Recursive Step FIRST ---
+      // Process children before deciding on the parent.
+      // Parent totals will be handled later by recalculateParentTotals.
       if (item.children && item.children.length > 0) {
         this.processItemsRecursively(item.children, options);
+      }
+      // --- Process LEAF nodes with eBKP ---
+      else if (item.ebkp) {
+        const normalizedExcelCode = this.normalizeEbkpCode(item.ebkp);
+        // Get BIM elements that EXACTLY match the normalized code
+        // Assumes ebkpMap keys are already normalized during construction
+        const exactMatchingElements = this.ebkpMap[normalizedExcelCode] || [];
+
+        if (exactMatchingElements.length > 0) {
+          // Sum quantity ONLY from exactly matching elements
+          const totalExactArea = exactMatchingElements.reduce(
+            (sum, element) => sum + this.getQuantityValue(element),
+            0
+          );
+
+          // Update item only if matching elements have quantity
+          if (totalExactArea > 0) {
+            if (!item.originalValues) item.originalValues = {};
+            if (item.menge !== undefined)
+              item.originalValues.menge = item.menge;
+            if (item.chf !== undefined) item.originalValues.chf = item.chf;
+
+            item.menge = totalExactArea;
+            item.area = totalExactArea;
+            item.areaSource = "IFC-Exact"; // Mark source clearly
+            item.kafkaTimestamp = new Date().toISOString();
+            item.dbElements = exactMatchingElements.length;
+            item.dbArea = totalExactArea;
+            // Potentially copy quantity type/unit from first match
+            if (exactMatchingElements[0]?.quantity?.type) {
+              item.quantityType = exactMatchingElements[0].quantity.type;
+              item.quantityUnit = exactMatchingElements[0].quantity.unit;
+            }
+
+            // Recalculate CHF based on exact match area and original kennwert
+            if (typeof item.kennwert === "number" && item.kennwert > 0) {
+              item.chf = item.kennwert * totalExactArea;
+              item.totalChf = item.chf; // Keep consistent
+              console.log(
+                `Mapped LEAF ${item.ebkp} with EXACT match: area=${totalExactArea}, chf=${item.chf}`
+              );
+            } else {
+              // Kennwert is missing or zero, cannot calculate cost
+              item.chf = 0;
+              item.totalChf = 0;
+              console.log(
+                `Mapped LEAF ${item.ebkp} with EXACT match: area=${totalExactArea}, but Kennwert is missing/zero. CHF set to 0.`
+              );
+            }
+          } else {
+            // Exact match(es) found, but total area is 0. Retain Excel values.
+            item.areaSource = "IFC-Exact (Zero Qty)";
+            console.log(
+              `Mapped LEAF ${item.ebkp}: Exact BIM match found but zero quantity. Retaining Excel values.`
+            );
+          }
+        } else {
+          // No exact BIM match found for this leaf item's eBKP code.
+          item.areaSource = "Excel"; // Explicitly mark as not mapped
+          // Retain original Excel menge/chf values (they are already there)
+          console.log(
+            `Mapped LEAF ${item.ebkp}: No exact BIM match found. Retaining Excel values.`
+          );
+        }
+      }
+      // --- Else: Item is a leaf node WITHOUT an eBKP code ---
+      // Retain its original values from Excel. It will be summed up by parents.
+      else if (!item.children || item.children.length === 0) {
+        item.areaSource = "Excel (No EBKP)";
       }
     });
   }
 
   /**
+   * Map quantities into cost items from the Excel file
+   */
+  mapQuantitiesToCostItems(
+    costItems: CostItem[],
+    options?: { alwaysUseDbQuantities?: boolean }
+  ): CostItem[] {
+    const updatedItems = JSON.parse(JSON.stringify(costItems)) as CostItem[];
+    const opts = {
+      alwaysUseDbQuantities: true, // This option seems less relevant now?
+      ...options,
+    };
+    this.processItemsRecursively(updatedItems, opts);
+    this.recalculateParentTotals(updatedItems);
+    return updatedItems;
+  }
+
+  /**
    * Calculate total cost for all items
+   * @deprecated Use recalculateParentTotals and access top-level chf instead.
    */
   calculateTotalCost(items: CostItem[]): number {
     let total = 0;
@@ -308,6 +344,35 @@ export class EbkpMapper {
     });
 
     return total;
+  }
+
+  /**
+   * Recursively recalculates the chf/totalChf for parent items
+   * based on the final values of their children.
+   */
+  private recalculateParentTotals(items: CostItem[]): void {
+    items.forEach((item) => {
+      if (item.children && item.children.length > 0) {
+        // First, ensure totals for all children are calculated
+        this.recalculateParentTotals(item.children);
+
+        // Now, sum the final chf values of the direct children
+        const childrenTotalChf = item.children.reduce(
+          (sum, child) => sum + (child.chf || child.totalChf || 0), // Use the final calculated chf of children
+          0
+        );
+
+        // Update the parent's chf value
+        item.chf = childrenTotalChf;
+        item.totalChf = childrenTotalChf; // Keep both fields consistent if needed
+
+        // Clear menge/kennwert for parent nodes if they only represent totals
+        item.menge = undefined;
+        item.kennwert = undefined;
+        item.einheit = undefined; // Clear unit as well
+      }
+      // Leaf nodes keep their chf calculated during processItemsRecursively
+    });
   }
 
   /**
