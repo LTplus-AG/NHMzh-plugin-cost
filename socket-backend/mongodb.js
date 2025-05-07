@@ -1011,7 +1011,7 @@ function normalizeEbkpCode(code) {
  * @returns {Promise<Object>} Result with counts
  */
 async function saveCostDataBatch(
-  costItems, // Keep for potential future use or logging, but primary logic changes
+  costItems, // These are the EnhancedCostItem[] from PreviewModal, already BIM-mapped
   projectName,
   sendKafkaMessage = null
 ) {
@@ -1019,11 +1019,12 @@ async function saveCostDataBatch(
     const { costDb: costDatabase, qtoDb: qtoDatabase } =
       await ensureConnection();
 
-    console.log(`Starting cost element update for project: ${projectName}`);
+    console.log(
+      `Starting cost element update for project: ${projectName} using pre-matched cost items.`
+    );
 
-    // 1. Find the full project document
+    // 1. Find the full project document (same as before)
     console.log(`Looking up project in QTO database: ${projectName}`);
-    // Fetch more fields, including metadata
     const qtoProject = await qtoDatabase.collection("projects").findOne(
       { name: { $regex: new RegExp(`^${projectName}$`, "i") } },
       {
@@ -1034,7 +1035,7 @@ async function saveCostDataBatch(
           created_at: 1,
           updated_at: 1,
         },
-      } // Fetch needed fields
+      }
     );
 
     if (!qtoProject) {
@@ -1045,73 +1046,66 @@ async function saveCostDataBatch(
     }
     const projectId = qtoProject._id;
     console.log(`Found project ID: ${projectId}, Name: ${qtoProject.name}`);
-
-    // --- Log the fetched qtoProject data --- START ---
     console.log(
-      "Fetched qtoProject data:",
+      "Fetched qtoProject data for cost batch:",
       JSON.stringify(qtoProject, null, 2)
     );
-    // --- Log the fetched qtoProject data --- END ---
 
-    // Extract required metadata for Kafka, using upload_timestamp
+    // Extract required metadata for Kafka (same as before)
     const originalTimestamp = qtoProject.metadata?.upload_timestamp;
-    let kafkaMetadata = null; // Initialize as null
-
+    let kafkaMetadata = null;
     if (!originalTimestamp) {
       console.error(
-        `CRITICAL: Original upload_timestamp missing in metadata for project ${projectName} (ID: ${projectId}). Cannot create accurate Kafka metadata for cost elements.`
+        `CRITICAL: Original upload_timestamp missing in metadata for project ${projectName} (ID: ${projectId}). Kafka messages for cost elements might be inaccurate.`
       );
-      // kafkaMetadata remains null
+      // Create a fallback kafkaMetadata to allow processing, but log critical warning
+      kafkaMetadata = {
+        project: qtoProject.name,
+        filename: qtoProject.metadata?.filename || `${projectName}_model.ifc`,
+        timestamp:
+          qtoProject.updated_at?.toISOString() || new Date().toISOString(), // Fallback timestamp
+        fileId: qtoProject.metadata?.file_id || projectId.toString(),
+      };
+      console.warn(
+        "Using fallback Kafka metadata due to missing upload_timestamp:",
+        JSON.stringify(kafkaMetadata)
+      );
     } else {
       kafkaMetadata = {
         project: qtoProject.name,
         filename: qtoProject.metadata?.filename || "unknown.ifc",
-        // Use ONLY the original timestamp
         timestamp: new Date(originalTimestamp).toISOString(),
-        fileId: qtoProject.metadata?.file_id || projectId.toString(), // Use file_id from metadata or fallback to projectId
+        fileId: qtoProject.metadata?.file_id || projectId.toString(),
       };
       console.log(
         `Prepared Kafka metadata using upload_timestamp: ${JSON.stringify(
           kafkaMetadata
-        )} (Timestamp used: ${kafkaMetadata.timestamp})`
+        )}`
       );
     }
 
-    // 2. Delete existing cost elements (remains the same)
+    // 2. Delete existing cost elements (same as before)
     console.log(`Deleting existing cost elements for project ${projectId}`);
     const deleteResult = await costDatabase
       .collection("costElements")
       .deleteMany({ project_id: projectId });
     console.log(`Deleted ${deleteResult.deletedCount} existing cost elements`);
 
-    // 3. Fetch costData map (remains the same)
-    console.log(`Fetching costData for project ${projectId}`);
-    const costDataEntries = await costDatabase
-      .collection("costData")
-      .find(
-        { project_id: projectId },
-        { projection: { _id: 1, ebkp_code: 1, unit_cost: 1 } }
-      )
-      .toArray();
-    const costDataMap = {};
-    costDataEntries.forEach((entry) => {
-      if (entry.ebkp_code) {
-        const normalizedCode = normalizeEbkpCode(entry.ebkp_code);
-        if (!costDataMap[normalizedCode]) {
-          costDataMap[normalizedCode] = {
-            _id: entry._id,
-            unit_cost: entry.unit_cost || 0,
-          };
-        }
+    // 3. Create a lookup map from the provided costItems (BIM-mapped data)
+    // The key is the normalized eBKP code.
+    const mappedCostItemsLookup = new Map();
+    costItems.forEach((item) => {
+      if (item.ebkp) {
+        const normalizedCode = normalizeEbkpCode(item.ebkp);
+        // Store the item itself, it contains unit_cost, area (BIM-mapped), and cost (BIM-mapped total)
+        mappedCostItemsLookup.set(normalizedCode, item);
       }
     });
     console.log(
-      `Created lookup map for ${
-        Object.keys(costDataMap).length
-      } costData entries`
+      `Created lookup map for ${mappedCostItemsLookup.size} provided (BIM-mapped) cost items.`
     );
 
-    // 4. Fetch active QTO elements (remains the same)
+    // 4. Fetch active QTO elements (same as before)
     console.log(`Fetching active QTO elements for project ${projectId}`);
     const activeQtoElements = await qtoDatabase
       .collection("elements")
@@ -1119,53 +1113,82 @@ async function saveCostDataBatch(
       .toArray();
     console.log(`Found ${activeQtoElements.length} active QTO elements.`);
 
-    // 5. Iterate and build costElementsToSave and elementsForKafka (logic largely the same)
+    // 5. Iterate through active QTO elements, apply costs from mappedCostItemsLookup, and build costElementsToSave and elementsForKafka
     const costElementsToSave = [];
     const elementsForKafka = [];
     let processedCount = 0;
     let skippedCount = 0;
 
     for (const qtoElement of activeQtoElements) {
-      const ebkpCode = getElementEbkpCode(qtoElement);
-      if (!ebkpCode) {
+      const qtoElementEbkpCode = getElementEbkpCode(qtoElement);
+      if (!qtoElementEbkpCode) {
         skippedCount++;
         continue;
       }
-      const normalizedCode = normalizeEbkpCode(ebkpCode);
-      const matchedCostData = costDataMap[normalizedCode];
+      const normalizedQtoEbkp = normalizeEbkpCode(qtoElementEbkpCode);
+      const matchedBimMappedItem = mappedCostItemsLookup.get(normalizedQtoEbkp);
 
-      if (matchedCostData && matchedCostData.unit_cost > 0) {
-        const costItemId = matchedCostData._id;
-        const unitCost = matchedCostData.unit_cost;
-        // Simplified quantity extraction logic - only check root fields
-        const elementQuantity =
-          qtoElement.area || // Check 1: Root area
-          qtoElement.volume || // Check 2: Root volume
-          qtoElement.length || // Check 3: Root length
-          0; // Fallback to 0
+      if (matchedBimMappedItem && matchedBimMappedItem.cost_unit > 0) {
+        const unitCost = matchedBimMappedItem.cost_unit;
+
+        // Determine the actual quantity of the QTO element
+        let elementQuantity = 0;
+        if (
+          qtoElement.quantity &&
+          typeof qtoElement.quantity === "object" &&
+          qtoElement.quantity.value !== undefined
+        ) {
+          elementQuantity = qtoElement.quantity.value;
+        } else if (
+          qtoElement.quantity !== undefined &&
+          typeof qtoElement.quantity === "number"
+        ) {
+          elementQuantity = qtoElement.quantity;
+        } else if (qtoElement.area !== undefined) {
+          // Fallback to area if specific quantity field is not present/structured
+          elementQuantity = qtoElement.area;
+        } else if (qtoElement.volume !== undefined) {
+          elementQuantity = qtoElement.volume;
+        } else if (qtoElement.length !== undefined) {
+          elementQuantity = qtoElement.length;
+        }
+        // Add more checks if other quantity fields are possible e.g. qtoElement.properties.NetVolume etc.
+
         const elementTotalCost = unitCost * elementQuantity;
 
-        // Log the calculation details (simplified)
+        // Log the calculation details
         console.log(
-          `[Cost Calc Debug] Element ID: ${qtoElement._id}, EBKP: ${ebkpCode}, UnitCost: ${unitCost}, ElementQuantity: ${elementQuantity} (Source fields checked: area=${qtoElement.area}, volume=${qtoElement.volume}, length=${qtoElement.length}), Calculated TotalCost: ${elementTotalCost}`
+          `[Cost Calc Debug - saveCostDataBatch] QTO Element ID: ${qtoElement._id}, EBKP: ${qtoElementEbkpCode} (Normalized: ${normalizedQtoEbkp}), Matched UnitCost: ${unitCost}, QTO ElementQuantity: ${elementQuantity}, Calculated TotalCost: ${elementTotalCost}`
         );
 
-        // Build costElementDoc (remains the same)
+        // Find the original Excel costData entry for cost_item_id reference, if needed.
+        // This step might be optional if cost_item_id is not strictly required or can be derived.
+        // For now, we'll try to find it, but it's less critical than using the correct unit_cost.
+        const correspondingRawCostData = await costDatabase
+          .collection("costData")
+          .findOne(
+            {
+              project_id: projectId,
+              ebkp_code: { $regex: new RegExp(`^${qtoElementEbkpCode}$`, "i") },
+            }, // Match case-insensitively
+            { projection: { _id: 1 } }
+          );
+
         const costElementDoc = {
-          ...qtoElement, // Base on the QTO element
-          _id: new ObjectId(), // New ID for this collection
+          ...qtoElement,
+          _id: new ObjectId(),
           qto_element_id: qtoElement._id,
-          qto_status: "active", // Status is known to be active
-          cost_item_id: costItemId, // Link to the costData entry
+          qto_status: "active",
+          cost_item_id: correspondingRawCostData?._id || new ObjectId(), // Link to raw costData or new ID if not found
           unit_cost: unitCost,
           total_cost: elementTotalCost,
-          currency: "CHF", // Assuming CHF
+          currency: "CHF",
           properties: {
             ...qtoElement.properties,
             cost_data: {
               unit_cost: unitCost,
               total_cost: elementTotalCost,
-              source: "excel-import", // Or derive from costData if available
+              source: matchedBimMappedItem.areaSource || "excel-bim-mapped",
               timestamp: new Date(),
             },
           },
@@ -1175,38 +1198,53 @@ async function saveCostDataBatch(
           updated_at: new Date(),
         };
         costElementsToSave.push(costElementDoc);
-        processedCount++;
 
-        // Prepare Kafka data (add project/filename from kafkaMetadata)
+        // Prepare Kafka data using the BIM-mapped costs and QTO element details
         elementsForKafka.push({
-          ...qtoElement,
-          project: kafkaMetadata.project,
-          filename: kafkaMetadata.filename,
+          // ...qtoElement, // Spread original QTO element
+          project: kafkaMetadata.project, // Use consistent project name from metadata
+          filename: kafkaMetadata.filename, // Use consistent filename from metadata
+          timestamp: kafkaMetadata.timestamp, // Use consistent timestamp from metadata for the batch event
+          fileId: kafkaMetadata.fileId, // Use consistent fileId from metadata
+
+          id: qtoElement.global_id || qtoElement._id.toString(), // Kafka message 'id' for the element
+          element_id: qtoElement._id.toString(), // Original element's DB ID
+
           cost_unit: unitCost,
-          cost: elementTotalCost,
-          ebkph: ebkpCode,
+          cost: elementTotalCost, // This is QTO_element_quantity * unitCost
+
+          // Include other relevant QTO element fields for the Kafka message
+          category:
+            qtoElement.ifc_class || qtoElement.properties?.category || "",
+          level: qtoElement.level || qtoElement.properties?.level || "",
+          ebkph: qtoElementEbkpCode, // The element's own EBKP code
           is_structural:
             qtoElement.properties?.structuralRole === "load_bearing" ||
             qtoElement.is_structural ||
             false,
           fire_rating: qtoElement.properties?.fireRating || "",
-          category:
-            qtoElement.ifc_class || qtoElement.properties?.category || "",
-          level: qtoElement.level || qtoElement.properties?.level || "",
-          // Use global_id for the 'id' field, fallback to _id
-          id: qtoElement.global_id || qtoElement._id.toString(),
-          // Keep element_id separately if needed for internal reference
-          element_id: qtoElement._id.toString(),
+          // Add quantity and unit if available and structured in qtoElement.quantity
+          quantity_value: qtoElement.quantity?.value,
+          quantity_unit: qtoElement.quantity?.unit,
+          quantity_type: qtoElement.quantity?.type,
+          // Legacy area if qtoElement.quantity is not structured
+          area: !qtoElement.quantity?.value ? qtoElement.area : undefined,
         });
+        processedCount++;
       } else {
+        if (!matchedBimMappedItem) {
+          // console.log(`Skipping QTO element ${qtoElement._id} (EBKP: ${qtoElementEbkpCode}) as no BIM-mapped cost item was found for it.`);
+        } else {
+          // console.log(`Skipping QTO element ${qtoElement._id} (EBKP: ${qtoElementEbkpCode}) as its BIM-mapped cost item has unit_cost <= 0.`);
+        }
         skippedCount++;
       }
     }
     console.log(
-      `Prepared ${processedCount} cost elements to save. Skipped ${skippedCount} active QTO elements.`
+      `Prepared ${processedCount} cost elements to save based on BIM-mapped items. Skipped ${skippedCount} active QTO elements (no match or zero unit cost).`
     );
 
-    // 6. Insert new cost elements (remains the same)
+    // 6. Insert new cost elements (same as before)
     let insertResult = { insertedCount: 0 };
     if (costElementsToSave.length > 0) {
       console.log(`Inserting ${costElementsToSave.length} cost elements...`);
@@ -1218,7 +1256,7 @@ async function saveCostDataBatch(
       );
     }
 
-    // 7. Update project summary (remains the same)
+    // 7. Update project summary (same as before)
     await updateProjectCostSummary(projectId);
 
     // 8. Send elements to Kafka, passing the prepared metadata object

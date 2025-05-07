@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Button,
   Dialog,
@@ -67,7 +67,7 @@ export interface EnhancedCostItem extends CostItem {
 interface PreviewModalProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (matches: EnhancedCostItem[]) => void; // Use the specific type here
+  onConfirm: (matches: EnhancedCostItem[]) => void;
   metaFile: MetaFile | null;
   calculatedTotalCost: number;
 }
@@ -159,14 +159,13 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
   const [activeTab, setActiveTab] = useState(0);
   const { getAreaData } = useKafka();
 
-  // Extract cost data items from metaFile
   const costItems = metaFile?.data
     ? Array.isArray(metaFile.data)
       ? metaFile.data
       : metaFile.data.data
     : [];
 
-  // Get all items including children
+  // Local helper function
   const getAllCostItems = (items: CostItem[]): CostItem[] => {
     let result: CostItem[] = [];
     items.forEach((item) => {
@@ -480,18 +479,40 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       ? Math.round((totalCodesWithMatches / totalCodesInExcel) * 100)
       : 0;
 
-  // Calculate cost by main code group
-  const costByGroup = Object.entries(groupedMatches).reduce(
-    (acc: { [key: string]: number }, [group, matches]) => {
-      // Sum up all Total CHF values for this group
-      acc[group] = matches.reduce(
-        (sum, match) => sum + match.costUnit * match.elementCount,
-        0
-      );
-      return acc;
-    },
-    {}
-  );
+  // Corrected costByGroup calculation
+  const costByGroup = useMemo(() => {
+    if (!metaFile?.data) return {};
+
+    const hierarchicalData = Array.isArray(metaFile.data)
+      ? metaFile.data
+      : metaFile.data.data;
+
+    if (!hierarchicalData) return {};
+
+    // 1. Flatten the hierarchy
+    const flatItems = getAllCostItems(hierarchicalData);
+
+    // 2. Filter for LEAF nodes only
+    const leafItems = flatItems.filter(
+      (item) => !item.children || item.children.length === 0
+    );
+
+    // 3. Group leaf nodes and sum their chf
+    const groups: { [key: string]: number } = {};
+    leafItems.forEach((item) => {
+      if (!item.ebkp) return; // Skip leaf items without eBKP
+
+      // Determine the group key (e.g., C, B, C01, B06, etc. - use the item's own ebkp as the key for the chip list)
+      const groupKey = item.ebkp;
+
+      if (!groups[groupKey]) {
+        groups[groupKey] = 0;
+      }
+      // Sum the final chf of this leaf item
+      groups[groupKey] += item.chf || item.totalChf || 0;
+    });
+    return groups;
+  }, [metaFile]); // Depend on metaFile
 
   // Return the data when confirmed
   const handleConfirm = () => {
@@ -514,47 +535,71 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       .filter((match) => match.costUnit > 0) // Skip items with zero cost
       .map((match) => {
         const costItem = match.excelItem || { bezeichnung: "", category: "" };
-        const area = match.elementCount; // Use element count as area measurement
-        const costUnit = match.costUnit || 0; // Unit cost
-        const totalCost = area * costUnit; // Total cost calculated from area and unit cost
+        // Use BIM-mapped values from match.excelItem
+        const bimMappedArea = costItem.area !== undefined ? costItem.area : 0; // Area/Quantity from BIM mapping
+        const unitCost =
+          costItem.kennwert !== undefined ? costItem.kennwert : 0; // Unit cost from Excel
+        const totalItemCost = costItem.chf !== undefined ? costItem.chf : 0; // Total CHF for this item, after BIM mapping
 
         // Create a QTO-based object with cost data
         return {
-          id: match.code,
+          id: match.code, // This is the eBKP code, which acts as an identifier for the group of elements
           ebkp: match.code,
           ebkph: match.code,
           ebkph1: match.code.match(/^([A-Z]\d+)/)?.[1] || "",
           ebkph2: match.code.match(/^[A-Z]\d+\.(\d+)/)?.[1] || "",
           ebkph3: "",
-          // QTO element properties
+          // QTO element properties (these are illustrative, real properties come from actual BIM elements later)
           category: String(costItem.bezeichnung || costItem.category || ""),
           level: String(costItem.level || ""),
-          is_structural: true,
-          fire_rating: "",
-          // Cost data
-          cost_unit: costUnit,
-          area: area,
-          quantity: area,
-          cost: totalCost,
-          element_count: match.elementCount,
+          is_structural:
+            typeof costItem.is_structural === "boolean"
+              ? costItem.is_structural
+              : true, // Default to true if not a boolean
+          fire_rating: String(costItem.fire_rating || ""), // Ensure string, default to empty string
+          // Cost data from BIM-mapped Excel item
+          cost_unit: unitCost,
+          area: bimMappedArea,
+          quantity: bimMappedArea, // Use BIM-mapped area as quantity
+          cost: totalItemCost, // Use BIM-mapped total cost for this item
+          element_count: match.elementCount, // This is the count of BIM elements for this eBKP code
           // Source information
           fileID: metaFile?.file.name || "unknown",
-          fromKafka: true,
+          fromKafka: true, // Indicates these are prepared for Kafka, based on BIM data
           kafkaSource: "BIM",
           kafkaTimestamp: new Date().toISOString(),
-          areaSource: "BIM",
-          // Additional properties needed for consistency
-          einheit: "m²",
-          menge: area,
-          totalChf: totalCost,
-          kennwert: costUnit,
+          areaSource: costItem.areaSource || "BIM", // Prefer actual source
+          // Additional properties needed for consistency (mostly from original Excel item)
+          einheit: costItem.einheit || "m²", // Prefer actual unit
+          menge: bimMappedArea, // Use BIM-mapped area
+          totalChf: totalItemCost, // Use BIM-mapped total cost
+          kennwert: unitCost, // Same as cost_unit
           bezeichnung: String(costItem.bezeichnung || ""),
-          // Do NOT include the originalItem reference - we want to save QTO objects
+          // originalItem: costItem.originalItem // Retain original if needed, but costElements will be built from QTO
         } as EnhancedCostItem;
       });
 
     console.log(
       `Sending ${enhancedData.length} matched QTO elements to update costElements collection (Excel data already saved to costData during upload - NOT deleting costData here)`
+    );
+
+    // Log the sum of the enhancedData being sent
+    const sumOfEnhancedData = enhancedData.reduce(
+      (sum, item) => sum + (item.cost || 0),
+      0
+    );
+    console.log(
+      "[PreviewModal] handleConfirm: Sum of enhancedData.cost being sent:",
+      sumOfEnhancedData
+    );
+    console.log(
+      "[PreviewModal] handleConfirm: Sample enhancedData items:",
+      enhancedData.slice(0, 5).map((i) => ({
+        ebkp: i.ebkp,
+        cost: i.cost,
+        cost_unit: i.cost_unit,
+        area: i.area,
+      }))
     );
 
     // First close the modal to avoid blocking UI
@@ -722,7 +767,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
 
                       <Box sx={{ mt: 1 }}>
                         {Object.entries(costByGroup)
-                          .sort((a, b) => b[1] - a[1]) // Sort by cost descending
+                          .sort((a, b) => b[1] - a[1])
                           .map(([group, cost]) => (
                             <Chip
                               key={group}
