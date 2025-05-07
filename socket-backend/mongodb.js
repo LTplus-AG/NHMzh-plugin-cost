@@ -118,7 +118,9 @@ async function initializeCollections() {
     if (!costCollectionNames.some((c) => c.name === "costElements")) {
       await costDb.createCollection("costElements");
     }
-  } catch (error) {}
+  } catch (error) {
+
+  }
 }
 
 /**
@@ -207,6 +209,7 @@ async function saveCostData(elementData, costResult) {
       updated_at: new Date(),
     };
 
+
     // Upsert the element document
     await qtoDb.collection("elements").updateOne(
       { _id: elementId },
@@ -240,6 +243,7 @@ async function saveCostData(elementData, costResult) {
       created_at: new Date(),
       updated_at: new Date(),
     };
+
 
     // Insert the cost data as a new document instead of updating
     const result = await costDb.collection("costData").insertOne(costData);
@@ -300,6 +304,7 @@ async function saveCostData(elementData, costResult) {
         created_at: new Date(),
         updated_at: new Date(),
       };
+
 
       // First delete any existing entries for this QTO element to avoid duplicates
       await costDb
@@ -519,6 +524,7 @@ async function getAllElementsForProject(projectName) {
         });
 
         if (project) {
+
           // Look up elements using the project ID
           elements = await qtoDb
             .collection("elements")
@@ -541,8 +547,11 @@ async function getAllElementsForProject(projectName) {
               `Skipped ${pendingCount} QTO elements with pending status for project ${projectName}`
             );
           }
+
+
         }
       } else {
+
       }
     } catch (error) {
       console.warn(
@@ -579,6 +588,8 @@ async function getAllElementsForProject(projectName) {
               .limit(200) // Limit to avoid too many results
               .toArray();
 
+
+
             if (foundElements.length > 0) {
               elements = foundElements;
               break;
@@ -595,13 +606,16 @@ async function getAllElementsForProject(projectName) {
 
     // If still no elements, check all collections in QTO database for elements related to this project
     if (elements.length === 0) {
+
       // Get list of all collections in QTO database
       const collections = await qtoDb.listCollections().toArray();
+
 
       // Sample a document from each collection to understand their structure
       for (const collection of collections) {
         const sampleDoc = await qtoDb.collection(collection.name).findOne({});
         if (sampleDoc) {
+
         }
       }
 
@@ -616,6 +630,7 @@ async function getAllElementsForProject(projectName) {
         element_id: { $in: elementIds },
       })
       .toArray();
+
 
     // Create a map of cost data by element ID for quick lookup
     const costDataMap = {};
@@ -670,6 +685,7 @@ async function getCostElementsByProject(projectName) {
   await ensureConnection();
 
   try {
+
     // First find the project ID
     const project = await qtoDb.collection("projects").findOne({
       name: { $regex: new RegExp(`^${projectName}$`, "i") },
@@ -701,6 +717,7 @@ async function getCostElementsByProject(projectName) {
       })
       .toArray();
 
+
     // Check if we have any cost elements for pending QTO elements
     const pendingElementsCount = await costDb
       .collection("costElements")
@@ -708,6 +725,7 @@ async function getCostElementsByProject(projectName) {
         project_id: projectId,
         qto_status: "pending",
       });
+
 
     // Compute summary statistics
     // Look for EBKP code in properties.classification.id or properties.ebkph
@@ -771,6 +789,7 @@ async function getCostElementsByEbkpCode(ebkpCode) {
   await ensureConnection();
 
   try {
+
     // Find elements where either properties.classification.id or properties.ebkph match
     const costElements = await costDb
       .collection("costElements")
@@ -919,6 +938,7 @@ async function saveCostDataBatch(
     }
     const projectId = qtoProject._id;
 
+
     // Extract required metadata for Kafka
     const originalTimestamp = qtoProject.metadata?.upload_timestamp;
     let kafkaMetadata = null;
@@ -945,6 +965,7 @@ async function saveCostDataBatch(
         timestamp: new Date(originalTimestamp).toISOString(),
         fileId: qtoProject.metadata?.file_id || projectId.toString(),
       };
+
     }
 
     // 2. Delete existing cost elements
@@ -1177,6 +1198,7 @@ async function saveCostDataBatch(
       (sum, elem) => sum + (elem.cost || 0),
       0
     );
+
 
     // Log items with high costs to help identify missing items
     const highCostItems = elementsForKafka
