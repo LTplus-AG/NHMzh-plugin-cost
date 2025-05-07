@@ -272,31 +272,18 @@ export class EbkpMapper {
             if (typeof item.kennwert === "number" && item.kennwert > 0) {
               item.chf = item.kennwert * totalExactArea;
               item.totalChf = item.chf; // Keep consistent
-              console.log(
-                `Mapped LEAF ${item.ebkp} with EXACT match: area=${totalExactArea}, chf=${item.chf}`
-              );
             } else {
               // Kennwert is missing or zero, cannot calculate cost
               item.chf = 0;
               item.totalChf = 0;
-              console.log(
-                `Mapped LEAF ${item.ebkp} with EXACT match: area=${totalExactArea}, but Kennwert is missing/zero. CHF set to 0.`
-              );
             }
           } else {
             // Exact match(es) found, but total area is 0. Retain Excel values.
             item.areaSource = "IFC-Exact (Zero Qty)";
-            console.log(
-              `Mapped LEAF ${item.ebkp}: Exact BIM match found but zero quantity. Retaining Excel values.`
-            );
           }
         } else {
           // No exact BIM match found for this leaf item's eBKP code.
           item.areaSource = "Excel"; // Explicitly mark as not mapped
-          // Retain original Excel menge/chf values (they are already there)
-          console.log(
-            `Mapped LEAF ${item.ebkp}: No exact BIM match found. Retaining Excel values.`
-          );
         }
       }
       // --- Else: Item is a leaf node WITHOUT an eBKP code ---

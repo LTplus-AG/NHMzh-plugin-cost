@@ -20,7 +20,7 @@ import {
   CircularProgress,
   SelectChangeEvent,
 } from "@mui/material";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import CostUploader from "./CostUploader/index";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -121,7 +121,6 @@ const MainPage = () => {
         setCostFileInfo({ fileName: null, date: null, status: null });
         setUploadedCostData(null); // Clear initial data
         setProcessedCostData(null); // Clear processed data
-        console.log("Cost file info reset.");
         return;
       }
 
@@ -150,11 +149,6 @@ const MainPage = () => {
       // Store the potentially processed data (always update this when callback is called)
       setProcessedCostData(dataArray);
 
-      console.log(
-        `Cost file info updated: ${fileName}, Status: ${newStatus}, Items: ${
-          dataArray?.length ?? 0
-        } (isUpdate: ${isUpdate})`
-      );
     },
     [uploadedCostData] // Re-run if uploadedCostData changes (for initial set)
   );
@@ -198,9 +192,7 @@ const MainPage = () => {
 
         // Simplified health check - assume available or let fetch fail
         const apiUrl = `${backendUrl}/project-elements/${encodedProjectName}`;
-        console.log(`Fetching elements from API URL: ${apiUrl}`);
         const response = await fetch(apiUrl);
-        console.log(`API response status: ${response.status}`);
 
         if (!response.ok) {
           throw new Error(
@@ -284,7 +276,6 @@ const MainPage = () => {
           // and the fetched list is not empty.
           if (projects.length > 0 && !selectedProject) {
             setSelectedProject(projects[0].name);
-            console.log(`Default project set to: ${projects[0].name}`); // Log default set
           }
         } catch (error) {
           console.error("Failed to fetch projects:", error);
@@ -303,9 +294,6 @@ const MainPage = () => {
   useEffect(() => {
     // Only fetch if selectedProject has a valid value (not empty string)
     if (selectedProject) {
-      console.log(
-        `Selected project changed to: ${selectedProject}, fetching elements...`
-      );
       fetchElementsForProject(selectedProject);
     } else {
       // Clear elements if project is deselected or becomes invalid
@@ -313,7 +301,6 @@ const MainPage = () => {
       setElementsByCategory({});
       setElementsByEbkp({});
       setModelMetadata(null); // Clear metadata if project is deselected
-      console.log("Selected project is empty, cleared elements and metadata.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject]); // Depend only on selectedProject (fetchElementsForProject is stable due to useCallback)
@@ -323,8 +310,6 @@ const MainPage = () => {
     const newProjectName = event.target.value;
     setSelectedProject(newProjectName); // This will trigger the useEffect above to fetch elements
   };
-
-  // REMOVED: Previous useEffect for initial data load (now handled by project list fetch)
 
   // Function to toggle category filter
   const toggleCategoryFilter = (category: string) => {

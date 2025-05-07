@@ -209,8 +209,6 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    console.log("Received request for all projects");
-
     (async () => {
       try {
         const projects = await getAllProjects();
@@ -286,10 +284,6 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    console.log(
-      `Received request for project elements (fetching ONLY from qto.elements) by name: ${projectName}` // Updated log
-    );
-
     // Fetch elements directly from qto.elements
     (async () => {
       let elements = [];
@@ -316,10 +310,6 @@ const server = http.createServer((req, res) => {
           return;
         }
         const projectId = qtoProject._id;
-        console.log(
-          `Found project ID: ${projectId} for project: ${projectName}, with metadata:`,
-          qtoProject.metadata
-        );
 
         // --- Extract Model Metadata ---
         const modelMetadata = {
@@ -330,10 +320,7 @@ const server = http.createServer((req, res) => {
             qtoProject.updated_at?.toISOString() ||
             new Date().toISOString(), // Fallback timestamp
         };
-        console.log(
-          `Prepared modelMetadata for ${projectName}:`,
-          modelMetadata
-        );
+
 
         // 2. Directly query the qto.elements collection using the projectId
         elements = await qtoDb
@@ -356,9 +343,6 @@ const server = http.createServer((req, res) => {
           );
         }
 
-        console.log(
-          `Retrieved ${elements.length} active QTO elements from qto.elements for project: ${projectName}`
-        );
 
         res.writeHead(200, { "Content-Type": "application/json" });
         // Return the new structure with modelMetadata and elements
@@ -388,9 +372,6 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    console.log(
-      `Received request for project cost data by name: ${projectName}`
-    );
 
     // Try to get project cost data directly using project name
     (async () => {
@@ -448,7 +429,6 @@ const server = http.createServer((req, res) => {
         }
 
         const projectId = qtoProject._id;
-        console.log(`Found project with ID: ${projectId}`);
 
         // First check if we have a cost summary
         const existingSummary = await costDb
@@ -474,9 +454,6 @@ const server = http.createServer((req, res) => {
           costSummary.elements_count > 0 &&
           costSummary.total_from_elements === 0
         ) {
-          console.log(
-            `Elements found (${costSummary.elements_count}) but zero cost - verifying...`
-          );
 
           // Get all cost elements and manually calculate total
           const costElements = await costDb
@@ -587,8 +564,6 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         const payload = data.payload || {};
 
-        console.log("Received cost update request:", data);
-
         // Validate minimum required data - we need projectName now, ID is optional
         if (!payload.projectName) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -614,8 +589,6 @@ const server = http.createServer((req, res) => {
             messages: [message],
           });
 
-          console.log("Cost update sent to Kafka:", message.key);
-
           // Update internal elements mapping if project is loaded
           const projectName = payload.projectName;
 
@@ -630,9 +603,6 @@ const server = http.createServer((req, res) => {
 
               if (project) {
                 projectId = project._id.toString();
-                console.log(
-                  `Found project ID for ${projectName}: ${projectId}`
-                );
               }
             } catch (error) {
               console.warn(
@@ -773,8 +743,6 @@ const server = http.createServer((req, res) => {
       req.url.replace("/test-kafka-message/", "")
     );
 
-    console.log(`Testing Kafka message for project: ${projectName}`);
-
     (async () => {
       try {
         // Connect to MongoDB
@@ -801,7 +769,6 @@ const server = http.createServer((req, res) => {
 
         // Get filename from project metadata, if available
         const filename = project.metadata?.filename || "";
-        console.log(`Using filename from project metadata: ${filename}`);
 
         // Get first element
         const element = await qtoDb.collection("elements").findOne({
@@ -868,9 +835,279 @@ const server = http.createServer((req, res) => {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: error.message }));
       });
-  } else {
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Not found" }));
+  } else if (data && data.type === "save_cost_batch_full") {
+    // Extract payload data
+    const { projectName, matchedItems, allExcelItems } = data.payload || {};
+
+    // Use promise-based approach instead of await
+    const saveFullBatchResult = async (
+      matchedItems,
+      allExcelItems,
+      projectName,
+      kafkaSender
+    ) => {
+      const matchedResult = await saveCostDataBatch(
+        matchedItems,
+        allExcelItems,
+        projectName,
+        kafkaSender
+      );
+      return matchedResult;
+    };
+
+    // Call the function and handle the promise
+    saveFullBatchResult(
+      matchedItems,
+      allExcelItems,
+      projectName,
+      sendCostElementsToKafka
+    )
+      .then((result) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            status: "success",
+            message: `Processed batch for ${projectName}`,
+            result,
+          })
+        );
+      })
+      .catch((error) => {
+        console.error("Error in save_cost_batch_full:", error);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            status: "error",
+            message: error.message,
+          })
+        );
+      });
+
+    return;
+  } else if (req.url === "/save_excel_data" || req.method === "POST") {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString();
+    });
+
+    req.on("end", async () => {
+      try {
+        // Parse JSON body
+        const data = JSON.parse(body);
+        const { projectName, excelItems, replaceExisting } = data.payload || {};
+        const messageId = data.messageId;
+
+        if (!projectName || !excelItems || excelItems.length === 0) {
+          console.error("Invalid save_excel_data payload:", data.payload);
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              type: "save_excel_data_response",
+              messageId,
+              status: "error",
+              message: "Invalid payload. Missing projectName or excelItems.",
+            })
+          );
+          return;
+        }
+
+        try {
+          // Connect to MongoDB and get database references
+          const { costDb, qtoDb } = await connectToMongoDB();
+
+          // Find or create the project
+          let projectId;
+
+          const qtoProject = await qtoDb.collection("projects").findOne({
+            name: { $regex: new RegExp(`^${projectName}$`, "i") },
+          });
+
+          if (qtoProject) {
+            projectId = qtoProject._id;
+          } else {
+            projectId = new ObjectId();
+
+            await qtoDb.collection("projects").insertOne({
+              _id: projectId,
+              name: projectName,
+              type: "BimProject",
+              status: "active",
+              metadata: {
+                source: "cost-plugin",
+                has_cost_data: true,
+              },
+              created_at: new Date(),
+              updated_at: new Date(),
+            });
+          }
+
+          if (replaceExisting) {
+
+            const deleteResult = await costDb
+              .collection("costData")
+              .deleteMany({
+                project_id: projectId,
+              });
+
+            const costDataToSave = excelItems
+              .map((item, index) => {
+                // Skip items with unit_cost of 0
+                const unitCost = parseFloat(item.kennwert || 0) || 0;
+                const totalCost =
+                  parseFloat(item.totalChf || item.chf || 0) || 0; // Also get totalCost
+                const ebkpCode = item.ebkp || "";
+
+                // CRITICAL CHANGE: Include items if they have EITHER unit cost OR total cost
+                if (!ebkpCode || (unitCost <= 0 && totalCost <= 0)) {
+                  // ebkpCode must also exist
+                  return null; // Return null for items to be filtered out
+                }
+
+                // Return valid items as before
+                return {
+                  _id: new ObjectId(),
+                  project_id: projectId,
+                  ebkp_code: ebkpCode,
+                  category: item.bezeichnung || item.category || "",
+                  level: item.level || "",
+                  unit_cost: unitCost,
+                  quantity: parseFloat(item.menge || 0) || 0,
+                  total_cost: totalCost,
+                  currency: "CHF",
+                  metadata: {
+                    source: "excel-import",
+                    timestamp: new Date(),
+                    original_data: {
+                      einheit: item.einheit || "m²",
+                      kommentar: item.kommentar || "",
+                      is_parent: !!(item.children && item.children.length > 0),
+                    },
+                  },
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                };
+              })
+              .filter((item) => item !== null); // Filter out null items
+
+            let insertedCount = 0;
+            if (costDataToSave.length > 0) {
+              const costDataResult = await costDb
+                .collection("costData")
+                .insertMany(costDataToSave);
+              insertedCount = costDataResult.insertedCount;
+            }
+            // Send success response for replace mode
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                type: "save_excel_data_response",
+                messageId,
+                status: "success",
+                message: `Successfully replaced data with ${insertedCount} Excel items.`, // Updated message
+                insertedCount: insertedCount,
+              })
+            );
+          } else {
+            const bulkOps = excelItems
+              .map((item) => {
+                // Skip items with zero unit cost
+                const unitCost = parseFloat(item.kennwert || 0) || 0;
+                const totalCost =
+                  parseFloat(item.totalChf || item.chf || 0) || 0; // Also get totalCost
+                const ebkpCode = item.ebkp || "";
+
+                if (!ebkpCode || (unitCost <= 0 && totalCost <= 0)) {
+                  // ebkpCode must also exist
+                  return null;
+                }
+
+                // Define the update document
+                const updateDoc = {
+                  project_id: projectId,
+                  ebkp_code: ebkpCode,
+                  category: item.bezeichnung || item.category || "",
+                  level: item.level || "",
+                  unit_cost: unitCost,
+                  quantity: parseFloat(item.menge || 0) || 0,
+                  total_cost: totalCost,
+                  currency: "CHF",
+                  metadata: {
+                    source: "excel-import",
+                    timestamp: new Date(),
+                    original_data: {
+                      einheit: item.einheit || "m²",
+                      kommentar: item.kommentar || "",
+                      is_parent: !!(item.children && item.children.length > 0),
+                    },
+                  },
+                  updated_at: new Date(),
+                };
+
+                // Return the bulk operation object
+                return {
+                  updateOne: {
+                    filter: { project_id: projectId, ebkp_code: ebkpCode }, // Match by project and EBKP code
+                    update: {
+                      $set: updateDoc, // Set all fields
+                      $setOnInsert: { created_at: new Date() }, // Set created_at only on insert
+                    },
+                    upsert: true, // Insert if no match is found
+                  },
+                };
+              })
+              .filter((op) => op !== null); // Filter out skipped items
+
+            let upsertedCount = 0;
+            let modifiedCount = 0;
+            if (bulkOps.length > 0) {
+              const bulkResult = await costDb
+                .collection("costData")
+                .bulkWrite(bulkOps);
+              upsertedCount = bulkResult.upsertedCount;
+              modifiedCount = bulkResult.modifiedCount;
+            }
+
+            // Send success response for update/upsert mode
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                type: "save_excel_data_response",
+                messageId,
+                status: "success",
+                message: `Successfully updated/inserted ${
+                  upsertedCount + modifiedCount
+                } Excel items.`, // Updated message
+                insertedCount: upsertedCount, // Report how many new ones were added
+                updatedCount: modifiedCount, // Report how many were updated
+              })
+            );
+          }
+        } catch (error) {
+          console.error(
+            `Error saving Excel data for project '${projectName}':`,
+            error
+          );
+          // Send error response
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              type: "save_excel_data_response",
+              messageId,
+              status: "error",
+              message: `Failed to save Excel data: ${error.message}`,
+            })
+          );
+        }
+      } catch (error) {
+        console.error("Error parsing save_excel_data request:", error);
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({ error: `Invalid request format: ${error.message}` })
+        );
+      }
+    });
+  } else if (data.type === "ping") {
+    ws.send(JSON.stringify({ type: "pong" }));
   }
 });
 
@@ -897,20 +1134,15 @@ function setupHeartbeat(ws, clientId) {
 
   // Set up ping handler
   ws.on("pong", () => {
-    console.log(`Received pong from client ${clientId}`);
     ws.isAlive = true;
   });
 }
 
 // Interval to ping clients and terminate dead connections
 const heartbeatInterval = setInterval(() => {
-  console.log(`Running heartbeat check for ${clients.size} clients`);
 
   clients.forEach((ws, clientId) => {
     if (ws.isAlive === false) {
-      console.log(
-        `Client ${clientId} didn't respond to ping, terminating connection`
-      );
       ws.terminate();
       clients.delete(clientId);
       return;
@@ -940,10 +1172,6 @@ wss.on("connection", async (ws, req) => {
   ws.lastPing = Date.now();
   clients.set(clientId, ws);
 
-  console.log(
-    `New client connected: ID=${clientId}, IP=${req.socket.remoteAddress}`
-  );
-
   // Set up ping/pong handlers
   ws.on("ping", () => {
     ws.lastPing = Date.now();
@@ -956,9 +1184,9 @@ wss.on("connection", async (ws, req) => {
 
   // Handle incoming messages
   ws.on("message", async (message) => {
+    // <-- Add async here
     try {
       const data = JSON.parse(message);
-      console.log(`Received message from client ${clientId}:`, message);
 
       // Handle delete project data request - new handler
       if (data.type === "delete_project_data") {
@@ -1003,9 +1231,7 @@ wss.on("connection", async (ws, req) => {
           return; // Stop if DB connection failed
         }
 
-        console.log(
-          `Received request to delete cost data for project '${projectName}'`
-        );
+
 
         try {
           // Find the project ID first
@@ -1015,7 +1241,6 @@ wss.on("connection", async (ws, req) => {
 
           if (!qtoProject) {
             // Project not found but don't treat it as an error
-            console.log(`Project '${projectName}' not found for deletion`);
             ws.send(
               JSON.stringify({
                 type: "delete_project_data_response",
@@ -1050,9 +1275,6 @@ wss.on("connection", async (ws, req) => {
             costElementsResult.deletedCount +
             costSummariesResult.deletedCount;
 
-          console.log(
-            `Deleted cost data for project '${projectName}': ${costDataResult.deletedCount} costData, ${costElementsResult.deletedCount} costElements, ${costSummariesResult.deletedCount} summaries`
-          );
 
           // Send success response
           ws.send(
@@ -1089,8 +1311,6 @@ wss.on("connection", async (ws, req) => {
 
       // Handle request for available eBKP codes
       if (data.type === "get_available_ebkp_codes") {
-        console.log("Received request for available eBKP codes");
-
         try {
           // Get all unique eBKP codes from elements and unit costs
           const allCodes = new Set([
@@ -1132,9 +1352,6 @@ wss.on("connection", async (ws, req) => {
           };
 
           ws.send(JSON.stringify(response));
-          console.log(
-            `Sent ${allCodes.size} available eBKP codes to client with details`
-          );
           return;
         } catch (error) {
           console.error(
@@ -1156,25 +1373,9 @@ wss.on("connection", async (ws, req) => {
 
       // Handle request for code matching
       if (data.type === "request_code_matching") {
-        console.log(
-          `Received code matching request with ${
-            data.codes?.length || 0
-          } codes from client ${clientId}`
-        );
-
         try {
-          // Log input details
-          if (data.codes?.length > 0) {
-            console.log(
-              `Sample codes: ${data.codes.slice(0, 5).join(", ")}...`
-            );
-          } else {
-            console.log("WARNING: No codes provided in request");
-          }
-
           // Force MongoDB load if requested
           if (data.debug?.forceMongoDB && config.mongodb.enabled) {
-            console.log("DEBUG: Client requested to force MongoDB load");
             await loadElementsFromMongoDB();
             // Force refresh matches after MongoDB load
             cachedMatches = null;
@@ -1183,11 +1384,9 @@ wss.on("connection", async (ws, req) => {
 
           // Get codes from the message
           const excelCodes = data.codes || [];
-          console.log(`Processing ${excelCodes.length} excel codes`);
 
           // Some basic validation
           if (!excelCodes.length) {
-            console.log("No codes to process, sending empty response");
             ws.send(
               JSON.stringify({
                 type: "code_matching_info",
@@ -1206,18 +1405,11 @@ wss.on("connection", async (ws, req) => {
           const normalizedCodes = excelCodes.map((code) =>
             normalizeEbkpCode(code)
           );
-          console.log(
-            `Normalized ${normalizedCodes.length} codes for matching`
-          );
 
           try {
             // Get elements and unit costs
             const elementsList = Object.values(ifcElementsByEbkph).flat();
-            console.log(
-              `Processing matches using ${elementsList.length} elements and ${
-                Object.keys(unitCostsByEbkph).length
-              } cost codes`
-            );
+
 
             // Process matches (will use cache if available)
             const matches = await batchProcessCodeMatches(
@@ -1225,7 +1417,6 @@ wss.on("connection", async (ws, req) => {
               unitCostsByEbkph,
               data.debug?.forceRefresh || false
             );
-            console.log(`Found ${matches.length} matches`);
 
             // Send back all matches in a single message with explicit status field
             const response = {
@@ -1241,11 +1432,6 @@ wss.on("connection", async (ws, req) => {
               isCached: !data.debug?.forceRefresh && cachedMatches !== null,
             };
 
-            console.log(
-              `Sending response for code matching: ${
-                matches ? matches.length : 0
-              } matches found`
-            );
             ws.send(JSON.stringify(response));
           } catch (error) {
             console.error("Error processing matches:", error);
@@ -1297,9 +1483,6 @@ wss.on("connection", async (ws, req) => {
           return;
         }
 
-        console.log(
-          `Received save_cost_batch for project '${projectName}' with ${costItems.length} items.`
-        );
 
         try {
           // Call the MongoDB function to save the batch directly
@@ -1309,10 +1492,7 @@ wss.on("connection", async (ws, req) => {
             projectName,
             sendEnhancedElementToKafka
           );
-          console.log(
-            `Batch save result for project '${projectName}':`,
-            result
-          );
+
 
           // Send success response
           ws.send(
@@ -1362,16 +1542,14 @@ wss.on("connection", async (ws, req) => {
           return;
         }
 
-        console.log(
-          `Received save_cost_batch_full for project '${projectName}' with ${matchedItems.length} matched items and ${allExcelItems.length} total Excel items.`
-        );
 
         try {
-          // Create a custom handler function that will pass both matched items and all Excel items
+          // Define the helper function to accept the Kafka sender
           const saveFullBatchResult = async (
             matchedItems,
             allExcelItems,
-            projectName
+            projectName,
+            kafkaSender // Added parameter
           ) => {
             // First ensure we're connected to the database
             const { costDb, qtoDb } = await connectToMongoDB();
@@ -1385,10 +1563,8 @@ wss.on("connection", async (ws, req) => {
 
             if (qtoProject) {
               projectId = qtoProject._id;
-              console.log(`Found existing QTO project with ID: ${projectId}`);
             } else {
               projectId = new ObjectId();
-              console.log(`Creating new project with ID: ${projectId}`);
 
               await qtoDb.collection("projects").insertOne({
                 _id: projectId,
@@ -1404,38 +1580,15 @@ wss.on("connection", async (ws, req) => {
               });
             }
 
-            // Step 2: Delete existing costElements entries but KEEP costData entries
-            // IMPORTANT: We're only updating the costElements collection here
             // The costData collection already contains the Excel data from the upload step
-            console.log(
-              `Deleting only costElements entries for project ${projectId}`
-            );
             await costDb
               .collection("costElements")
               .deleteMany({ project_id: projectId });
-
-            // Step 3: Skip saving Excel items to costData - we've already done this during upload
-            console.log(
-              `Using ${allExcelItems.length} existing Excel items from costData collection (not modifying costData)`
-            );
-
-            // Step 4: Process matched items using the existing function to update costElements
             const matchedResult = await saveCostDataBatch(
               matchedItems,
-              projectName,
-              // Pass the correct batch sending function
-              sendCostElementsToKafka // <-- Use this function
-              // REMOVED old callback:
-              // async (elements) => {
-              //   let filename = "";
-              //   if (qtoProject && qtoProject.metadata && qtoProject.metadata.filename) {
-              //     filename = qtoProject.metadata.filename;
-              //   }
-              //   return await sendCostElementsToKafka(elements, projectName, filename);
-              // }
-            );
-            console.log(
-              `Processed ${matchedItems.length} matched items for costElements collection`
+              allExcelItems, // Add allExcelItems as the second argument
+              projectName, // projectName is the third argument
+              kafkaSender // sendKafkaMessage is the fourth argument
             );
 
             return {
@@ -1445,11 +1598,12 @@ wss.on("connection", async (ws, req) => {
             };
           };
 
-          // Call our custom handler
+          // Call the helper, passing sendCostElementsToKafka
           const result = await saveFullBatchResult(
             matchedItems,
             allExcelItems,
-            projectName
+            projectName,
+            sendCostElementsToKafka // Pass the function here
           );
 
           // Send success response
@@ -1497,9 +1651,6 @@ wss.on("connection", async (ws, req) => {
           return;
         }
 
-        console.log(
-          `Received raw Excel data for project '${projectName}' with ${excelItems.length} items. Replace existing: ${replaceExisting}`
-        );
 
         try {
           // Connect to MongoDB and get database references
@@ -1514,10 +1665,8 @@ wss.on("connection", async (ws, req) => {
 
           if (qtoProject) {
             projectId = qtoProject._id;
-            console.log(`Found existing QTO project with ID: ${projectId}`);
           } else {
             projectId = new ObjectId();
-            console.log(`Creating new project with ID: ${projectId}`);
 
             await qtoDb.collection("projects").insertOne({
               _id: projectId,
@@ -1535,29 +1684,23 @@ wss.on("connection", async (ws, req) => {
 
           if (replaceExisting) {
             // Delete existing costData if flag is true
-            console.log(
-              `Deleting existing costData for project ${projectName} before saving new data`
-            );
             const deleteResult = await costDb
               .collection("costData")
               .deleteMany({
                 project_id: projectId,
               });
-            console.log(
-              `Deleted ${deleteResult.deletedCount} existing costData entries`
-            );
 
             // --- INSERT LOGIC (when replaceExisting is true) ---
             const costDataToSave = excelItems
               .map((item, index) => {
                 // Skip items with unit_cost of 0
                 const unitCost = parseFloat(item.kennwert || 0) || 0;
-                if (unitCost <= 0) {
-                  console.log(
-                    `Skipping Excel item with EBKP ${
-                      item.ebkp || ""
-                    } due to zero unit cost`
-                  );
+                const totalCost =
+                  parseFloat(item.totalChf || item.chf || 0) || 0; // Also get totalCost
+                const ebkpCode = item.ebkp || "";
+
+                if (!ebkpCode || (unitCost <= 0 && totalCost <= 0)) {
+                  // ebkpCode must also exist
                   return null; // Return null for items to be filtered out
                 }
 
@@ -1565,12 +1708,12 @@ wss.on("connection", async (ws, req) => {
                 return {
                   _id: new ObjectId(),
                   project_id: projectId,
-                  ebkp_code: item.ebkp || "",
+                  ebkp_code: ebkpCode,
                   category: item.bezeichnung || item.category || "",
                   level: item.level || "",
                   unit_cost: unitCost,
                   quantity: parseFloat(item.menge || 0) || 0,
-                  total_cost: parseFloat(item.totalChf || item.chf || 0) || 0,
+                  total_cost: totalCost,
                   currency: "CHF",
                   metadata: {
                     source: "excel-import",
@@ -1578,7 +1721,7 @@ wss.on("connection", async (ws, req) => {
                     original_data: {
                       einheit: item.einheit || "m²",
                       kommentar: item.kommentar || "",
-                      // excel_row: index + 1, // Row index isn't easily available here
+                      is_parent: !!(item.children && item.children.length > 0),
                     },
                   },
                   created_at: new Date(),
@@ -1593,9 +1736,6 @@ wss.on("connection", async (ws, req) => {
                 .collection("costData")
                 .insertMany(costDataToSave);
               insertedCount = costDataResult.insertedCount;
-              console.log(
-                `Successfully inserted ${insertedCount} Excel items into costData collection (replace mode)`
-              );
             } else {
               console.log("No valid Excel items to insert (replace mode).");
             }
@@ -1611,16 +1751,17 @@ wss.on("connection", async (ws, req) => {
             );
           } else {
             // --- UPDATE/UPSERT LOGIC (when replaceExisting is false) ---
-            console.log(`Upserting costData for project ${projectName}`);
             const bulkOps = excelItems
               .map((item) => {
                 // Skip items with zero unit cost
                 const unitCost = parseFloat(item.kennwert || 0) || 0;
+                const totalCost =
+                  parseFloat(item.totalChf || item.chf || 0) || 0; // Also get totalCost
                 const ebkpCode = item.ebkp || "";
-                if (unitCost <= 0 || !ebkpCode) {
-                  console.log(
-                    `Skipping Excel item with EBKP ${ebkpCode} due to zero unit cost or missing code`
-                  );
+
+                // CRITICAL CHANGE: Include items with EITHER unit cost OR total cost
+                if (!ebkpCode || (unitCost <= 0 && totalCost <= 0)) {
+                  // ebkpCode must also exist
                   return null;
                 }
 
@@ -1632,7 +1773,7 @@ wss.on("connection", async (ws, req) => {
                   level: item.level || "",
                   unit_cost: unitCost,
                   quantity: parseFloat(item.menge || 0) || 0,
-                  total_cost: parseFloat(item.totalChf || item.chf || 0) || 0,
+                  total_cost: totalCost,
                   currency: "CHF",
                   metadata: {
                     source: "excel-import",
@@ -1640,7 +1781,7 @@ wss.on("connection", async (ws, req) => {
                     original_data: {
                       einheit: item.einheit || "m²",
                       kommentar: item.kommentar || "",
-                      // excel_row: index + 1, // Row index isn't easily available here
+                      is_parent: !!(item.children && item.children.length > 0),
                     },
                   },
                   updated_at: new Date(),
@@ -1668,15 +1809,14 @@ wss.on("connection", async (ws, req) => {
                 .bulkWrite(bulkOps);
               upsertedCount = bulkResult.upsertedCount;
               modifiedCount = bulkResult.modifiedCount;
-              console.log(
-                `Bulk write completed: ${upsertedCount} inserted, ${modifiedCount} updated (update mode)`
-              );
+
             } else {
               console.log("No valid Excel items to upsert (update mode).");
             }
 
             // Send success response for update/upsert mode
-            ws.send(
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
               JSON.stringify({
                 type: "save_excel_data_response",
                 messageId,
@@ -1695,7 +1835,8 @@ wss.on("connection", async (ws, req) => {
             error
           );
           // Send error response
-          ws.send(
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(
             JSON.stringify({
               type: "save_excel_data_response",
               messageId,
@@ -1751,9 +1892,6 @@ function broadcast(message) {
       client.readyState === WebSocket.CLOSING
     ) {
       // Clean up clients that are already closed
-      console.log(
-        `Client ${clientId} connection is already closed, removing from client list`
-      );
       clients.delete(clientId);
       closedCount++;
     }
@@ -1774,17 +1912,12 @@ async function ensureTopicExists(topic) {
 
     // List existing topics
     const topics = await admin.listTopics();
-    console.log(`Available Kafka topics: ${topics.join(", ")}`);
 
     // If topic doesn't exist, create it
     if (!topics.includes(topic)) {
-      console.log(`Topic '${topic}' does not exist. Creating it...`);
       await admin.createTopics({
         topics: [{ topic, numPartitions: 1, replicationFactor: 1 }],
       });
-      console.log(`Created topic: ${topic}`);
-    } else {
-      console.log(`Topic '${topic}' already exists`);
     }
 
     return true;
@@ -1801,48 +1934,34 @@ async function run() {
   let adminConnected = false;
   try {
     // 1. Connect Admin and Ensure Topics
-    console.log("Connecting Kafka admin client...");
     await admin.connect();
     adminConnected = true;
-    console.log("Kafka admin client connected.");
     await ensureTopicExists(config.kafka.topic); // Note: ensureTopicExists connects/disconnects admin internally
     await ensureTopicExists(config.kafka.costTopic); // Note: ensureTopicExists connects/disconnects admin internally
-    console.log("Topics ensured.");
     // No need to disconnect admin here as ensureTopicExists does it.
     adminConnected = false; // Mark as disconnected after use
 
     // 2. Connect Cost Producer
-    console.log("Attempting to connect cost producer...");
     await costProducer.connect();
-    console.log("Cost producer connected successfully.");
     costProducerConnected = true; // Set state on success
 
     // 3. Connect and Run Consumer
-    console.log("Connecting Kafka consumer...");
     await consumer.connect();
-    console.log("Kafka consumer connected.");
     isKafkaConnected = true; // Set general Kafka connection flag
 
     // Broadcast Kafka connection status to all clients
     broadcast(JSON.stringify({ type: "kafka_status", status: "CONNECTED" }));
 
-    console.log("Subscribing to topic:", config.kafka.topic);
     await consumer.subscribe({
       topic: config.kafka.topic,
       fromBeginning: false, // Set to true if you need to process old messages on restart
     });
-    console.log("Subscription successful.");
 
-    console.log("Starting Kafka message processing loop...");
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
         try {
           const messageValue = message.value?.toString();
           if (messageValue) {
-            console.log(
-              `Received message from Kafka topic ${topic}:`,
-              messageValue.substring(0, 200) + "..." // Log truncated message
-            );
 
             let messageData;
             try {
@@ -1869,9 +1988,6 @@ async function run() {
 
               if (projectId && projectName) {
                 // Check essential fields
-                console.log(
-                  `Received PROJECT_UPDATED notification for project: ${projectName} (ID: ${projectId})`
-                );
 
                 // Store/Update metadata
                 projectMetadataStore[projectId] = {
@@ -1880,15 +1996,8 @@ async function run() {
                   timestamp: timestamp || new Date().toISOString(), // Use provided or current timestamp
                   fileId: fileId || projectId,
                 };
-                console.log(
-                  `Stored/Updated metadata for projectId ${projectId}:`,
-                  projectMetadataStore[projectId]
-                );
 
                 // Trigger cost summary update
-                console.log(
-                  `Triggering cost summary update for project ${projectId}`
-                );
                 await updateProjectCostSummary(projectId);
               } else {
                 console.warn(
@@ -1898,11 +2007,6 @@ async function run() {
               }
             } else {
               // Handle other message types if needed
-              console.log(
-                `Received non-PROJECT_UPDATED message type: ${
-                  messageData.type || "unknown"
-                }. Skipping detailed processing.`
-              );
               // Optionally forward original message: broadcast(messageValue);
             }
             // --- End processing logic ---
@@ -1948,12 +2052,6 @@ async function run() {
           : "DISCONNECTED", // Include cost producer status
       })
     );
-
-    // Optional: Implement retry logic here if desired
-    // setTimeout(() => {
-    //   console.log("Attempting to reconnect to Kafka...");
-    //   run();
-    // }, 5000); // Example: Retry after 5 seconds
   }
 }
 
@@ -2094,20 +2192,12 @@ async function sendEnhancedElementToKafka(
   const messageKey = meta.fileId;
 
   try {
-    console.log(
-      `Attempting to send Cost message (IfcFileData) to Kafka topic ${config.kafka.costTopic}:`,
-      // ... (logging object remains the same) ...
-      { project: costMessage.project, filename: costMessage.filename /* ... */ }
-    );
 
     await costProducer.send({
       topic: config.kafka.costTopic,
       messages: [{ value: JSON.stringify(costMessage), key: messageKey }],
     });
 
-    console.log(
-      `Cost message sent successfully to Kafka topic ${config.kafka.costTopic}`
-    );
     return true;
   } catch (sendError) {
     console.error("Error sending cost message to Kafka:", sendError);
@@ -2135,7 +2225,6 @@ async function sendBatchElementsToKafka(
   }
 
   if (!elements || elements.length === 0) {
-    console.log("No elements provided to sendBatchElementsToKafka.");
     return false; // Nothing to send
   }
 
@@ -2201,20 +2290,12 @@ async function sendBatchElementsToKafka(
   const messageKey = meta.fileId;
 
   try {
-    console.log(
-      `Attempting to send Cost batch message (IfcFileData) to Kafka topic ${config.kafka.costTopic}:`,
-      // ... (logging object remains the same) ...
-      { project: costMessage.project, filename: costMessage.filename /* ... */ }
-    );
 
     await costProducer.send({
       topic: config.kafka.costTopic,
       messages: [{ value: JSON.stringify(costMessage), key: messageKey }],
     });
 
-    console.log(
-      `Cost batch message sent successfully to Kafka topic ${config.kafka.costTopic}`
-    );
     return true; // Indicate success
   } catch (sendError) {
     console.error("Error sending batch cost elements to Kafka:", sendError);
@@ -2228,7 +2309,6 @@ async function sendBatchElementsToKafka(
 // It now accepts the verified kafkaMetadata object directly
 async function sendCostElementsToKafka(elements, kafkaMetadata) {
   if (!elements || elements.length === 0) {
-    console.log("No cost elements to send to Kafka");
     return { success: false, count: 0 };
   }
 
@@ -2247,9 +2327,6 @@ async function sendCostElementsToKafka(elements, kafkaMetadata) {
     return { success: false, count: 0 };
   }
 
-  console.log(
-    `Preparing to send ${elements.length} elements for project ${kafkaMetadata.project} with timestamp ${kafkaMetadata.timestamp}`
-  );
 
   // Process in batches using sendBatchElementsToKafka
   const BATCH_SIZE = 1000; // Increased batch size
@@ -2267,9 +2344,6 @@ async function sendCostElementsToKafka(elements, kafkaMetadata) {
     }
   }
 
-  console.log(
-    `Kafka sending for cost elements complete. Total sent: ${totalSent}/${elements.length}`
-  );
   return { success: totalSent > 0, count: totalSent };
 }
 
@@ -2287,7 +2361,6 @@ async function sendBatchElementsToKafka(
     return false;
   }
   if (!elements || elements.length === 0) {
-    console.log("No elements provided to sendBatchElementsToKafka.");
     return false;
   }
 
@@ -2306,12 +2379,88 @@ async function sendBatchElementsToKafka(
     return false; // Cannot proceed without essential metadata
   }
 
-  // Create CostData items from the elements array
-  const costDataItems = elements.map((element) => ({
-    id: element.id, // This SHOULD be the global_id (or fallback _id) from mongodb.js
-    cost: element.cost || 0,
-    cost_unit: element.cost_unit || 0,
-  }));
+  // Add deduplication tracking
+  const processedIds = new Set();
+  const uniqueElements = [];
+
+  // Create CostData items from the elements array with deduplication
+  const costDataItems = elements
+    .map((element, index) => {
+      // First check for nested data structures
+      const nestedDataSource =
+        element.enhancedData || element.excelData || element.bimData || element;
+
+      // Get the best ID value available
+      const elementId =
+        nestedDataSource.id ||
+        nestedDataSource.element_id ||
+        nestedDataSource._id?.toString() ||
+        nestedDataSource.global_id ||
+        nestedDataSource.ebkp ||
+        `unknown-${index}`;
+
+      // Skip duplicate elements
+      if (processedIds.has(elementId)) {
+        return null;
+      }
+
+      // Track this ID to prevent duplicates
+      processedIds.add(elementId);
+
+      // Only log critical debugging info for first few elements - SIMPLIFIED
+      if (index < 2 && process.env.DEBUG_KAFKA === "true") {
+        console.log(`DEBUG: Processing element ${index} with ID ${elementId}`);
+      }
+
+      // Try to extract cost values from various possible locations
+      const cost =
+        nestedDataSource.cost ||
+        nestedDataSource.totalCost ||
+        nestedDataSource.total_cost ||
+        nestedDataSource.totalchf ||
+        nestedDataSource.chf ||
+        nestedDataSource.properties?.cost ||
+        nestedDataSource.metadata?.cost ||
+        ((nestedDataSource.unit_cost || nestedDataSource.kennwert) &&
+        nestedDataSource.quantity
+          ? (nestedDataSource.unit_cost || nestedDataSource.kennwert) *
+            nestedDataSource.quantity
+          : (nestedDataSource.unit_cost || nestedDataSource.kennwert) &&
+            nestedDataSource.menge
+          ? (nestedDataSource.unit_cost || nestedDataSource.kennwert) *
+            nestedDataSource.menge
+          : 0);
+
+      const costUnit =
+        nestedDataSource.cost_unit ||
+        nestedDataSource.unitCost ||
+        nestedDataSource.unit_cost ||
+        nestedDataSource.kennwert ||
+        nestedDataSource.properties?.cost_unit ||
+        nestedDataSource.metadata?.unit_cost ||
+        0;
+
+      // Only log a small sample of items to avoid excessive output
+      if (index === 0 || (cost > 100000 && index % 50 === 0)) {
+        console.log(
+          `Element ${index}: ID=${elementId}, cost=${cost.toFixed(
+            2
+          )}, unit=${costUnit}`
+        );
+      }
+
+      return {
+        id: elementId,
+        cost: typeof cost === "string" ? parseFloat(cost) : cost,
+        cost_unit:
+          typeof costUnit === "string" ? parseFloat(costUnit) : costUnit,
+      };
+    })
+    .filter((item) => item !== null); // Filter out duplicates
+
+  // Summarize cost data more concisely
+  const nonZeroCostItems = costDataItems.filter((item) => item.cost > 0);
+  const totalCost = nonZeroCostItems.reduce((sum, item) => sum + item.cost, 0);
 
   // Create IfcFileData message using the verified kafkaMetadata
   const costMessage = {
@@ -2325,20 +2474,11 @@ async function sendBatchElementsToKafka(
   const messageKey = kafkaMetadata.fileId;
 
   try {
-    // --- Log the final message structure --- START ---
-    console.log(
-      `Attempting to send Cost batch message (IfcFileData) to Kafka topic ${config.kafka.costTopic}:`,
-      JSON.stringify(costMessage, null, 2) // Log the full message being sent
-    );
-    // --- Log the final message structure --- END ---
-
+    // Send to Kafka with less verbose logging
     await costProducer.send({
       topic: config.kafka.costTopic,
       messages: [{ value: JSON.stringify(costMessage), key: messageKey }],
     });
-    console.log(
-      `Cost batch message sent successfully to Kafka topic ${config.kafka.costTopic}`
-    );
     return true;
   } catch (sendError) {
     console.error("Error sending batch cost elements to Kafka:", sendError);
@@ -2348,7 +2488,6 @@ async function sendBatchElementsToKafka(
 
 // Handle server shutdown
 const shutdown = async () => {
-  console.log("Shutting down...");
 
   // Clear intervals
   clearInterval(heartbeatInterval);
@@ -2362,17 +2501,14 @@ const shutdown = async () => {
   try {
     if (consumer.isRunning) {
       await consumer.disconnect();
-      console.log("Kafka consumer disconnected");
     }
 
     if (producer.isConnected) {
       await producer.disconnect();
-      console.log("Kafka producer disconnected");
     }
 
     if (costProducer.isConnected) {
       await costProducer.disconnect();
-      console.log("Cost producer disconnected");
     }
   } catch (error) {
     console.error("Error disconnecting Kafka clients:", error);
@@ -2398,77 +2534,6 @@ server.listen(config.websocket.port, async () => {
     // Call the new function to load elements right after connecting DB
     await loadInitialElementsFromQtoDb();
 
-    // ---- REMOVED OLD LOADING LOGIC ----
-    // console.log("Loading elements from MongoDB...");
-    // const db = await connectToMongoDB();
-    //
-    // if (!db || !db.qtoDb) {
-    //   console.error("Failed to connect to MongoDB or get qtoDb reference");
-    // } else {
-    // Query all elements
-    // const elements = await db.qtoDb.collection("elements").find({}).toArray();
-    // console.log(`Found ${elements.length} elements in MongoDB`);
-    //
-    // // Clear existing data
-    // Object.keys(ifcElementsByEbkph).forEach(
-    //   (key) => delete ifcElementsByEbkph[key]
-    // );
-    // processedElementIds.clear();
-    //
-    // // Process elements
-    // let processedCount = 0;
-    // for (const element of elements) {
-    //   // Try to extract eBKP code from various locations
-    //   let ebkpCode = null;
-    //
-    //   // Check in properties.classification.id first (most common MongoDB format)
-    //   if (element.properties?.classification?.id) {
-    //     ebkpCode = element.properties.classification.id;
-    //   }
-    //   // Then try properties.ebkph
-    //   else if (element.properties?.ebkph) {
-    //     ebkpCode = element.properties.ebkph;
-    //   }
-    //   // Finally, check root level properties
-    //   else if (element.ebkph) {
-    //     ebkpCode = element.ebkph;
-    //   } else if (element.ebkp_code) {
-    //     ebkpCode = element.ebkp_code;
-    //   }
-    //
-    //   if (ebkpCode) {
-    //     // Normalize code for consistent matching
-    //     const normalizedCode = normalizeEbkpCode(ebkpCode);
-    //
-    //     // Store element by normalized code
-    //     if (!ifcElementsByEbkph[normalizedCode]) {
-    //       ifcElementsByEbkph[normalizedCode] = [];
-    //     }
-    //
-    //     // Get quantity from root level
-    //     const quantity = element.quantity || 0;
-    //
-    //     // Store element with quantity as area
-    //     ifcElementsByEbkph[normalizedCode].push({
-    //       ...element,
-    //       area: quantity, // Use quantity as area
-    //       quantity: quantity, // Keep original quantity
-    //     });
-    //     processedCount++;
-    //
-    //     // Mark as processed to avoid duplicates
-    //     processedElementIds.add(element._id.toString());
-    //   }
-    // }
-    //
-    // console.log(
-    //   `Successfully loaded ${processedCount} elements from MongoDB with eBKP codes`
-    // );
-    // console.log(`Available eBKP codes:`, Object.keys(ifcElementsByEbkph));
-    //
-    // // Print QTO element codes summary
-    // // await printAllQtoElementCodes(); // Function not defined
-    // }
   } catch (error) {
     console.error("Error loading elements from MongoDB:", error);
   }
@@ -2501,16 +2566,6 @@ function normalizeEbkpCode(code) {
 
   // Convert to uppercase for consistent matching
   const upperCode = code.toUpperCase().trim();
-
-  // Special case handling for common variations
-  // Handle patterns like:
-  // "C01.01" becomes "C1.1"
-  // "C1.1" remains "C1.1"
-  // "C01.1" becomes "C1.1"
-  // "C1.01" becomes "C1.1"
-  // "C01" becomes "C1"
-  // "C 1" becomes "C1"
-  // "C 1.1" becomes "C1.1"
 
   // Remove any spaces
   let normalized = upperCode.replace(/\s+/g, "");
@@ -2545,9 +2600,7 @@ function broadcastElementUpdate() {
   };
 
   broadcast(JSON.stringify(elementInfo));
-  console.log(
-    `Broadcast element update: ${processedElementIds.size} elements available`
-  );
+
 }
 
 // Add a function to broadcast cost match information for a single code
@@ -2566,9 +2619,6 @@ function broadcastCostMatch(ebkpCode, costUnit, elementCount) {
   };
 
   broadcast(JSON.stringify(matchInfo));
-  console.log(
-    `Broadcast cost match for code ${ebkpCode}: ${elementCount} element(s), unit cost = ${costUnit}`
-  );
 }
 
 // Add this function to find the best match for an EBKP code
@@ -2634,28 +2684,15 @@ async function batchProcessCodeMatches(
     }
   }
 
-  console.log(
-    `Processing new matches with ${elements.length} elements and ${
-      Object.keys(unitCosts).length
-    } unit costs`
-  );
-
   // Quick check if both arrays are empty
   if (elements.length === 0 || Object.keys(unitCosts).length === 0) {
-    console.log(
-      "Either elements or unit costs are empty, returning empty array"
-    );
     return [];
   }
 
   const matches = [];
   const processedCodes = new Set();
 
-  // Log some sample elements to help debug
-  if (elements.length > 0) {
-    console.log("Sample elements for debugging:");
-    console.log(JSON.stringify(elements.slice(0, 2), null, 2));
-  }
+
 
   // Create a map of normalized codes for faster lookup
   const normalizedCostCodes = new Map();
@@ -2664,7 +2701,6 @@ async function batchProcessCodeMatches(
     normalizedCostCodes.set(normalizedCode, { code, costInfo });
   });
 
-  console.log(`Normalized ${normalizedCostCodes.size} cost codes for lookup`);
 
   // Process all elements at once
   for (const element of elements) {
@@ -2687,9 +2723,6 @@ async function batchProcessCodeMatches(
     if (!ebkpCode || processedCodes.has(ebkpCode)) continue;
 
     const normalizedCode = normalizeEbkpCode(ebkpCode);
-    console.log(
-      `Processing element code: ${ebkpCode} (normalized: ${normalizedCode})`
-    );
 
     const match = findBestEbkphMatch(normalizedCode);
 
@@ -2716,9 +2749,6 @@ async function batchProcessCodeMatches(
     }
   }
 
-  console.log(
-    `Found ${matches.length} matches from ${elements.length} elements`
-  );
 
   // Cache the results
   cachedMatches = matches;
@@ -2746,7 +2776,6 @@ async function sendTestCostMessage() {
     cost_unit: 10.0,
   };
 
-  console.log("Sending test cost message to Kafka...");
   const result = await sendEnhancedElementToKafka(testElement);
 
   if (result) {
@@ -2803,9 +2832,6 @@ async function sendTestCostBatch() {
     },
   ];
 
-  console.log(
-    `Sending test batch of ${testElements.length} cost elements to Kafka...`
-  );
   const result = await sendBatchElementsToKafka(
     testElements,
     project,
@@ -2823,7 +2849,6 @@ async function sendTestCostBatch() {
 
 // NEW function to load initial elements
 async function loadInitialElementsFromQtoDb() {
-  console.log("Attempting to load initial elements from QTO DB...");
   try {
     const { qtoDb } = await connectToMongoDB(); // Ensure connection
     if (!qtoDb) {
@@ -2843,9 +2868,6 @@ async function loadInitialElementsFromQtoDb() {
     );
 
     const elements = await qtoDb.collection("elements").find({}).toArray();
-    console.log(
-      `Found ${elements.length} elements in qto.elements collection.`
-    );
 
     let processedCount = 0;
     elements.forEach((element) => {
@@ -2880,16 +2902,8 @@ async function loadInitialElementsFromQtoDb() {
       processedElementIds.add(elementId);
     });
 
-    console.log(
-      `Successfully loaded and processed ${processedCount} elements with EBKP codes into memory.`
-    );
     console.log(`Total elements tracked (by ID): ${processedElementIds.size}.`);
-    console.log(
-      `Total EBKP codes in cache: ${Object.keys(ifcElementsByEbkph).length}.`
-    );
-    console.log(
-      `Total projects in cache: ${Object.keys(elementsByProject).length}.`
-    );
+
   } catch (error) {
     console.error("Error loading initial elements from QTO DB:", error);
   }
