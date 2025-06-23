@@ -534,7 +534,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     }
 
     return {
-      id: element._id,
+      id: element.global_id || element._id, // Use global_id as primary identifier, fallback to _id only if empty
       ebkpCode: ebkpCode,
       quantity: element.quantity,
       area: area,

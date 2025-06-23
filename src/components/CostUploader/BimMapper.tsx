@@ -128,7 +128,7 @@ const BimMapper = ({
       const adaptedElements: AdaptedBimElement[] = ifcElements.map(
         (element) => ({
           ...element,
-          id: element._id,
+          id: element.global_id || element._id,
           ebkpCode:
             element.classification?.id || element.properties?.ebkph || "",
         })
