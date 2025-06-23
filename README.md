@@ -7,7 +7,7 @@
 [![Kafka](https://img.shields.io/badge/Kafka-231F20.svg?style=for-the-badge&logo=apache-kafka)](https://kafka.apache.org/)
 [![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen.svg?style=for-the-badge)](https://github.com/LTplus-AG/NHMzh-plugin-cost)
 
-A cost calculation module for the Sustainability Monitoring System for the City of Zurich (Nachhaltigkeitsmonitoring der Stadt Zürich), allowing extraction of cost data from Excel files and applying it to BIM elements.
+A cost calculation module for the Sustainability Monitoring System for the City of Zurich (Nachhaltigkeitsmonitoring der Stadt Zürich). Users enter unit costs per eBKP classification which are multiplied with quantities from the BIM model.
 
 ## 📋 Table of Contents
 
@@ -26,7 +26,6 @@ A cost calculation module for the Sustainability Monitoring System for the City 
 
 - **WebSocket Backend**: Real-time communication with frontend
 - **Kafka Integration**: Receives elements from QTO plugin and publishes cost calculations
-- **Excel Upload**: Import unit costs from Excel files
 - **MongoDB Integration**: Persistent storage of cost data
 - **Cost Calculation**: Automatically calculate costs based on element areas and unit costs
 - **Project Summaries**: Calculate and store project-level cost summaries
@@ -40,12 +39,11 @@ A cost calculation module for the Sustainability Monitoring System for the City 
 - **Kafka Consumer**: Listens for element updates from the QTO plugin
 - **Kafka Producer**: Publishes cost calculations for consumption by other modules
 - **MongoDB Connector**: Handles database operations for storing and retrieving cost data
-- **Excel Parser**: Extracts unit cost data from uploaded Excel spreadsheets
 
 ### Frontend
 
 - **React/TypeScript** with a component-based architecture
-- **Excel Upload Component**: For importing unit costs
+- **Kennwert Input Interface**: Enter unit costs per eBKP directly in the UI
 - **Cost Table**: Interactive display of costs with filtering capabilities
 - **EBKP Structure View**: Hierarchical cost breakdown by building element classification
 - **Project Summary Dashboard**: Visualizes total costs and breakdowns by category
@@ -53,8 +51,8 @@ A cost calculation module for the Sustainability Monitoring System for the City 
 ### Data Flow
 
 1. Elements are received from the QTO plugin
-2. Unit costs are imported by users through Excel upload
-3. Costs are calculated by matching elements with appropriate unit costs
+2. Users enter unit costs for each eBKP code
+3. Costs are calculated by multiplying the entered values with the element quantities
 4. Results are stored in MongoDB and published to Kafka
 5. Other modules (e.g., Dashboard) can retrieve and use cost data
 
@@ -177,10 +175,8 @@ The WebSocket backend provides the following HTTP endpoints:
 The WebSocket server handles the following events:
 
 - `connection`: Sent when client connects
-- `unit_costs`: Client uploads cost data from Excel
 - `cost_match_info`: Server informs about cost matches
 - `element_update`: Server informs about new elements
-- `cost_data_response`: Server response to Excel upload
 
 ## 🔗 Integration
 
