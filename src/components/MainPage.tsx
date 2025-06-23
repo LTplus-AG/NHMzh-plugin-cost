@@ -811,8 +811,8 @@ const MainPage = () => {
               </TableHead>
               <TableBody>
                 {filteredElements.map((element) => (
-                  <TableRow key={element._id}>
-                    <TableCell>{element._id.substring(0, 6)}...</TableCell>
+                    <TableRow key={element.global_id || element._id}>
+                    <TableCell>{(element.global_id || element._id).substring(0, 6)}...</TableCell>
                     <TableCell>
                       {element.type_name || element.element_type || element.ifc_class || "—"}
                     </TableCell>

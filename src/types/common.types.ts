@@ -8,7 +8,6 @@ export interface AvailableQuantity {
 export interface MongoElement {
   _id: string;
   project_id: string;
-  ifc_id?: string;
   global_id?: string;
   ifc_class?: string;
   name?: string;
