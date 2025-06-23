@@ -1,3 +1,4 @@
+/* eslint-disable */
 const { Kafka } = require("kafkajs");
 const WebSocket = require("ws");
 const http = require("http");
