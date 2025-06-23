@@ -2217,11 +2217,13 @@ async function sendEnhancedElementToKafka(
   }
 }
 
-// Modify sendBatchElementsToKafka to use the new format and pass metadata
-async function sendBatchElementsToKafka(
+// Legacy implementation kept for reference. The actual implementation is
+// defined further below. This old version is no longer used but retained to
+// document the previous approach.
+async function sendBatchElementsToKafkaOld(
   elements,
-  project, // Note: project object might not be available, use meta instead
-  filename, // Note: filename might not be available, use meta instead
+  project,
+  filename,
   originalMetadata = null
 ) {
   // Check if producer was connected at startup
