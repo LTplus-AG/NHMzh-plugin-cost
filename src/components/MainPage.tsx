@@ -20,6 +20,7 @@ import {
   CircularProgress,
   SelectChangeEvent,
 } from "@mui/material";
+import SendIcon from "@mui/icons-material/Send";
 import { useState, useEffect, useCallback } from "react";
 import { useKafka } from "../contexts/KafkaContext";
 import ProjectMetadataDisplay, {
@@ -27,51 +28,83 @@ import ProjectMetadataDisplay, {
 } from "./ui/ProjectMetadataDisplay";
 import { MongoElement } from "../types/common.types";
 import EbkpCostForm, { EbkpStat } from "./EbkpCostForm";
+import PreviewModal, { EnhancedCostItem } from "./CostUploader/PreviewModal";
 
-// Helper to extract quantity and unit from a Mongo element
-const getQuantityInfo = (
-  el: MongoElement
-): { value: number; unit?: string } => {
-  // Quantity object with explicit type
-  if (
-    el.quantity &&
-    typeof el.quantity.value === "number" &&
-    el.quantity.type
-  ) {
-    return {
-      value: el.quantity.value,
-      unit: el.quantity.unit ||
-        (el.quantity.type.toLowerCase() === "area" ? "m²" : "m"),
-    };
+const getAvailableQuantities = (el: MongoElement) => {
+  const quantities = [];
+  
+  if (el.available_quantities && el.available_quantities.length > 0) {
+    return el.available_quantities;
   }
+  
+  const elAny = el as any;
+  
+  if (elAny.area && elAny.area > 0) {
+    quantities.push({
+      value: elAny.area,
+      type: "area",
+      unit: "m²",
+      label: "Area"
+    });
+  }
+  
+  if (elAny.length && elAny.length > 0) {
+    quantities.push({
+      value: elAny.length,
+      type: "length",
+      unit: "m",
+      label: "Length"
+    });
+  }
+  
+  if (elAny.volume && elAny.volume > 0) {
+    quantities.push({
+      value: elAny.volume,
+      type: "volume",
+      unit: "m³",
+      label: "Volume"
+    });
+  }
+  
+  if (quantities.length === 0 || !quantities.some(q => q.type === 'count')) {
+    quantities.push({
+      value: 1,
+      type: "count",
+      unit: "Stk",
+      label: "Count"
+    });
+  }
+  
+  return quantities;
+};
 
-  // Check for area on element or in properties
-  if (typeof (el as { area?: number }).area === "number") {
-    return { value: (el as { area: number }).area, unit: "m²" };
+const getSelectedQuantity = (
+  el: MongoElement,
+  selectedType?: string
+): { value: number; unit: string; type: string } => {
+  const availableQuantities = getAvailableQuantities(el);
+  
+  if (availableQuantities.length === 0) {
+    return { value: 1, unit: "Stk", type: "count" };
   }
-  if (typeof el.properties?.area === "number") {
-    return { value: el.properties.area, unit: "m²" };
+  
+  if (selectedType) {
+    const selected = availableQuantities.find(q => q.type === selectedType);
+    if (selected) {
+      return {
+        value: selected.value,
+        unit: selected.unit,
+        type: selected.type
+      };
+    }
   }
-
-  // Original quantity information
-  if (el.original_quantity && typeof el.original_quantity.value === "number") {
-    return {
-      value: el.original_quantity.value,
-      unit:
-        el.original_quantity.type?.toLowerCase() === "area" ? "m²" : undefined,
-    };
-  }
-
-  // Fallback to length if available
-  if (typeof (el as { length?: number }).length === "number") {
-    return { value: (el as { length: number }).length, unit: "m" };
-  }
-
-  if (typeof el.quantity_value === "number") {
-    return { value: el.quantity_value };
-  }
-
-  return { value: 0 };
+  
+  const defaultQty = availableQuantities[0];
+  return {
+    value: defaultQty.value,
+    unit: defaultQty.unit,
+    type: defaultQty.type
+  };
 };
 
 interface Project {
@@ -112,6 +145,76 @@ const MainPage = () => {
 
   const [ebkpStats, setEbkpStats] = useState<EbkpStat[]>([]);
   const [kennwerte, setKennwerte] = useState<Record<string, number>>({});
+  const [quantitySelections, setQuantitySelections] = useState<Record<string, string>>({});
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
+  
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [metaFileForPreview, setMetaFileForPreview] = useState<any>(null);
+
+  // Load project-specific data when project changes
+  useEffect(() => {
+    if (!selectedProject) {
+      setKennwerte({});
+      setQuantitySelections({});
+      return;
+    }
+
+    try {
+      // Load Kennwerte for this project
+      const kennwerteKey = `cost-plugin-kennwerte-${selectedProject}`;
+      const savedKennwerte = localStorage.getItem(kennwerteKey);
+      if (savedKennwerte) {
+        const parsedKennwerte = JSON.parse(savedKennwerte);
+        setKennwerte(parsedKennwerte);
+
+      } else {
+        setKennwerte({});
+      }
+
+      // Load quantity selections for this project
+      const selectionsKey = `cost-plugin-quantity-selections-${selectedProject}`;
+      const savedSelections = localStorage.getItem(selectionsKey);
+      if (savedSelections) {
+        const parsedSelections = JSON.parse(savedSelections);
+        setQuantitySelections(parsedSelections);
+
+      } else {
+        setQuantitySelections({});
+      }
+    } catch (error) {
+      console.warn('Failed to load saved data for project:', error);
+      setKennwerte({});
+      setQuantitySelections({});
+    }
+  }, [selectedProject]);
+
+  // Save Kennwerte to localStorage whenever they change (project-specific)
+  useEffect(() => {
+    if (!selectedProject) return;
+    
+    try {
+      const key = `cost-plugin-kennwerte-${selectedProject}`;
+      localStorage.setItem(key, JSON.stringify(kennwerte));
+      setLastSaved(new Date().toLocaleTimeString('de-CH'));
+
+    } catch (error) {
+      console.warn('Failed to save Kennwerte to localStorage:', error);
+    }
+  }, [kennwerte, selectedProject]);
+
+  // Save quantity selections to localStorage whenever they change (project-specific)
+  useEffect(() => {
+    if (!selectedProject) return;
+    
+    try {
+      const key = `cost-plugin-quantity-selections-${selectedProject}`;
+      localStorage.setItem(key, JSON.stringify(quantitySelections));
+      setLastSaved(new Date().toLocaleTimeString('de-CH'));
+
+    } catch (error) {
+      console.warn('Failed to save quantity selections to localStorage:', error);
+    }
+  }, [quantitySelections, selectedProject]);
 
   const fetchElementsForProject = useCallback(
     async (projectName: string | null) => {
@@ -163,7 +266,13 @@ const MainPage = () => {
 
           const categoryCounts: Record<string, number> = {};
           const ebkpCounts: Record<string, number> = {};
-          const statMap: Record<string, { quantity: number; unit?: string }> = {};
+          const statMap: Record<string, { 
+            quantity: number; 
+            unit?: string;
+            availableQuantities?: any[];
+            selectedQuantityType?: string;
+            elements: MongoElement[];
+          }> = {};
 
           elements.forEach((el: MongoElement) => {
             const category = el.ifc_class || el.properties?.category || "Unknown";
@@ -173,10 +282,55 @@ const MainPage = () => {
               el.classification?.id || el.properties?.ebkph || "Unknown";
             ebkpCounts[code] = (ebkpCounts[code] || 0) + 1;
 
-            const { value: qty, unit } = getQuantityInfo(el);
-            if (!statMap[code]) statMap[code] = { quantity: 0, unit };
-            statMap[code].quantity += qty;
-            if (!statMap[code].unit && unit) statMap[code].unit = unit;
+            if (!statMap[code]) {
+              statMap[code] = { 
+                quantity: 0, 
+                unit: undefined,
+                availableQuantities: [],
+                selectedQuantityType: quantitySelections[code],
+                elements: []
+              };
+            }
+            statMap[code].elements.push(el);
+          });
+
+          // Now calculate aggregated quantities for each EBKP code
+          Object.keys(statMap).forEach(code => {
+            const stat = statMap[code];
+            const selectedType = quantitySelections[code];
+            let totalQuantity = 0;
+            let unit = "";
+            const allAvailableQuantities = new Map();
+
+            // Aggregate quantities from all elements in this EBKP group
+            stat.elements.forEach(el => {
+              const availableQuantities = getAvailableQuantities(el);
+              const selectedQty = getSelectedQuantity(el, selectedType);
+              
+              totalQuantity += selectedQty.value;
+              unit = selectedQty.unit; // Use unit from selected quantity type
+              
+              // Collect all unique quantity types available across elements
+              availableQuantities.forEach(qty => {
+                const key = qty.type;
+                if (!allAvailableQuantities.has(key)) {
+                  allAvailableQuantities.set(key, {
+                    value: 0,
+                    type: qty.type,
+                    unit: qty.unit,
+                    label: qty.label
+                  });
+                }
+                // Aggregate the quantity for this type
+                const currentQty = getSelectedQuantity(el, qty.type);
+                allAvailableQuantities.get(key).value += currentQty.value;
+              });
+            });
+
+            stat.quantity = totalQuantity;
+            stat.unit = unit;
+            stat.availableQuantities = Array.from(allAvailableQuantities.values());
+            stat.selectedQuantityType = selectedType || (stat.availableQuantities[0]?.type);
           });
 
           setElementsByCategory(categoryCounts);
@@ -185,6 +339,8 @@ const MainPage = () => {
             code,
             quantity: v.quantity,
             unit: v.unit,
+            availableQuantities: v.availableQuantities,
+            selectedQuantityType: v.selectedQuantityType,
           }));
           setEbkpStats(stats);
           setKennwerte((prev) => {
@@ -286,6 +442,255 @@ const MainPage = () => {
     setSelectedCategories([]);
     setSelectedEbkps([]);
   };
+
+  const clearSavedData = () => {
+    if (!selectedProject) return;
+    
+    try {
+      const kennwerteKey = `cost-plugin-kennwerte-${selectedProject}`;
+      const selectionsKey = `cost-plugin-quantity-selections-${selectedProject}`;
+      
+      localStorage.removeItem(kennwerteKey);
+      localStorage.removeItem(selectionsKey);
+      setKennwerte({});
+      setQuantitySelections({});
+      setLastSaved(null);
+
+      if (currentElements.length > 0) {
+        recalculateStats({});
+      }
+    } catch (error) {
+      console.warn('Failed to clear saved data:', error);
+    }
+  };
+
+  const handlePreviewCosts = () => {
+    if (!selectedProject || ebkpStats.length === 0) return;
+    
+    const costItems = ebkpStats
+      .filter(stat => stat.quantity > 0 && kennwerte[stat.code] > 0)
+      .map(stat => ({
+        ebkp: stat.code,
+        bezeichnung: `${stat.code} - Baugruppe`,
+        menge: stat.quantity,
+        einheit: stat.unit || 'm²',
+        kennwert: kennwerte[stat.code] || 0,
+        chf: (kennwerte[stat.code] || 0) * stat.quantity,
+        totalChf: (kennwerte[stat.code] || 0) * stat.quantity,
+        category: stat.code.charAt(0),
+        level: "1",
+        is_structural: true,
+        fire_rating: "",
+        area: stat.quantity,
+        areaSource: "BIM"
+      }));
+
+    const metaFile = {
+      file: { name: `${selectedProject}_costs.json` },
+      data: costItems
+    };
+
+    setMetaFileForPreview(metaFile);
+    setPreviewModalOpen(true);
+  };
+
+  const handleConfirmCosts = async (enhancedData: EnhancedCostItem[]) => {
+    try {
+      if (!selectedProject) {
+        console.error('Missing project');
+        return;
+      }
+
+      // Get WebSocket connection
+      const ws = (window as any).ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn("WebSocket not connected, trying to reconnect");
+        try {
+          const wsUrl: string =
+            (window as { VITE_WEBSOCKET_URL?: string }).VITE_WEBSOCKET_URL ||
+            import.meta.env.VITE_WEBSOCKET_URL ||
+            "ws://localhost:8001";
+          const newWs = new WebSocket(wsUrl);
+          (window as { ws?: WebSocket }).ws = newWs;
+          await new Promise((resolve, reject) => {
+            newWs.onopen = resolve;
+            newWs.onerror = reject;
+            setTimeout(() => reject(new Error("WS connect timeout")), 5000);
+          });
+        } catch (error) {
+          console.error("Failed to connect to WebSocket:", error);
+          throw new Error("WebSocket connection failed");
+        }
+      }
+
+      // Create message ID
+      const messageId = `batch_${Date.now()}${Math.random()
+        .toString(36)
+        .substring(2, 7)}`;
+
+      // Create Excel items from current cost data
+      const allExcelItems = ebkpStats
+        .filter(stat => stat.quantity > 0 && kennwerte[stat.code] > 0)
+        .map(stat => ({
+          ebkp: stat.code,
+          bezeichnung: `${stat.code} - Baugruppe`,
+          menge: stat.quantity,
+          einheit: stat.unit || 'm²',
+          kennwert: kennwerte[stat.code] || 0,
+          chf: (kennwerte[stat.code] || 0) * stat.quantity,
+          totalChf: (kennwerte[stat.code] || 0) * stat.quantity,
+          category: stat.code.charAt(0),
+          level: "1",
+          is_structural: true,
+          fire_rating: "",
+          area: stat.quantity,
+          areaSource: "BIM"
+        }));
+
+      // Send WebSocket message
+      const message = {
+        type: "save_cost_batch_full",
+        messageId,
+        payload: {
+          projectName: selectedProject,
+          matchedItems: enhancedData,
+          allExcelItems: allExcelItems,
+        },
+      };
+
+      const wsToUse = (window as any).ws;
+      wsToUse.send(JSON.stringify(message));
+      console.log(`Full cost batch sent to server for project ${selectedProject}`);
+
+      // Wait for response
+      const response = await new Promise((resolve, reject) => {
+        const responseHandler = (event: MessageEvent) => {
+          try {
+            const responseData = JSON.parse(event.data);
+            if (
+              responseData.type === "save_cost_batch_full_response" &&
+              responseData.messageId === messageId
+            ) {
+              wsToUse?.removeEventListener("message", responseHandler);
+              clearTimeout(timeoutId);
+              resolve(responseData);
+            }
+          } catch {
+            /* Ignore */
+          }
+        };
+        wsToUse?.addEventListener("message", responseHandler);
+        const timeoutId = setTimeout(() => {
+          wsToUse?.removeEventListener("message", responseHandler);
+          reject(new Error("Timeout waiting for save_cost_batch_full_response"));
+        }, 30000);
+        wsToUse?.addEventListener("close", () => clearTimeout(timeoutId), {
+          once: true,
+        });
+      });
+
+      if ((response as any).status === "success") {
+        console.log('Cost data uploaded successfully:', response);
+        // Close the preview modal
+        setPreviewModalOpen(false);
+        // Optionally show success message or refresh data
+      } else {
+        console.error('Error saving cost data backend:', (response as any).message || "Unknown error");
+      }
+      
+    } catch (error) {
+      console.error('Error uploading cost data:', error);
+    }
+  };
+
+  const recalculateStats = useCallback((newQuantitySelections: Record<string, string>) => {
+    if (currentElements.length === 0) return;
+    
+    const statMap: Record<string, { 
+      quantity: number; 
+      unit?: string;
+      availableQuantities?: any[];
+      selectedQuantityType?: string;
+      elements: MongoElement[];
+    }> = {};
+
+    // Group elements by EBKP code
+    currentElements.forEach((el: MongoElement) => {
+      const code = el.classification?.id || el.properties?.ebkph || "Unknown";
+      
+      if (!statMap[code]) {
+        statMap[code] = { 
+          quantity: 0, 
+          unit: undefined,
+          availableQuantities: [],
+          selectedQuantityType: newQuantitySelections[code],
+          elements: []
+        };
+      }
+      statMap[code].elements.push(el);
+    });
+
+    // Calculate aggregated quantities for each EBKP code
+    Object.keys(statMap).forEach(code => {
+      const stat = statMap[code];
+      const selectedType = newQuantitySelections[code];
+      let totalQuantity = 0;
+      let unit = "";
+      const allAvailableQuantities = new Map();
+
+      // Aggregate quantities from all elements in this EBKP group
+      stat.elements.forEach(el => {
+        const availableQuantities = getAvailableQuantities(el);
+        const selectedQty = getSelectedQuantity(el, selectedType);
+        
+        totalQuantity += selectedQty.value;
+        unit = selectedQty.unit;
+        
+        // Collect all unique quantity types available across elements
+        availableQuantities.forEach(qty => {
+          const key = qty.type;
+          if (!allAvailableQuantities.has(key)) {
+            allAvailableQuantities.set(key, {
+              value: 0,
+              type: qty.type,
+              unit: qty.unit,
+              label: qty.label
+            });
+          }
+          const currentQty = getSelectedQuantity(el, qty.type);
+          allAvailableQuantities.get(key).value += currentQty.value;
+        });
+      });
+
+      stat.quantity = totalQuantity;
+      stat.unit = unit;
+      stat.availableQuantities = Array.from(allAvailableQuantities.values());
+      stat.selectedQuantityType = selectedType || (stat.availableQuantities[0]?.type);
+    });
+
+    const stats = Object.entries(statMap).map(([code, v]) => ({
+      code,
+      quantity: v.quantity,
+      unit: v.unit,
+      availableQuantities: v.availableQuantities,
+      selectedQuantityType: v.selectedQuantityType,
+    }));
+    
+    // console.log('📊 New stats calculated:', stats);
+    setEbkpStats(stats);
+  }, [currentElements]);
+
+  const handleQuantityTypeChange = useCallback((code: string, quantityType: string) => {
+    // console.log(`🔄 Changing quantity type for ${code} to ${quantityType}`);
+    
+    const newSelections = {
+      ...quantitySelections,
+      [code]: quantityType
+    };
+    
+    setQuantitySelections(newSelections);
+    recalculateStats(newSelections);
+  }, [quantitySelections, recalculateStats]);
 
   const getFilteredElements = () => {
     if (selectedCategories.length === 0 && selectedEbkps.length === 0) {
@@ -480,29 +885,41 @@ const MainPage = () => {
               </FormControl>
             </div>
 
-            {totalCost > 0 && (
-              <Box
-                sx={{
-                  mt: 3,
-                  mb: 2,
-                  p: 2,
-                  background: "linear-gradient(to right top, #F1D900, #fff176)",
-                  borderRadius: "4px",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "center",
-                  minHeight: "60px",
-                  boxShadow: 1,
-                }}
-              >
-                <Typography variant="h5" component="p" color="common.black" fontWeight="bold">
-                  CHF {totalCost.toLocaleString("de-CH", { maximumFractionDigits: 0 })}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Kostenschätzung
-                </Typography>
+
+
+            {/* Data persistence section */}
+            <Box sx={{ mt: 2, mb: 2 }}>
+              <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                Gespeicherte Daten
+              </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    💾 Kennwerte: {Object.keys(kennwerte).length} gespeichert
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    📊 Mengenauswahl: {Object.keys(quantitySelections).length} gespeichert
+                  </Typography>
+                </Box>
+                {lastSaved && (
+                  <Typography variant="caption" color="success.main" sx={{ fontSize: '0.7rem' }}>
+                    ✅ Zuletzt gespeichert: {lastSaved}
+                  </Typography>
+                )}
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="warning"
+                  onClick={clearSavedData}
+                  sx={{ mt: 1, fontSize: "0.75rem" }}
+                  disabled={Object.keys(kennwerte).length === 0 && Object.keys(quantitySelections).length === 0}
+                >
+                  🗑️ Alle Daten löschen
+                </Button>
               </Box>
-            )}
+            </Box>
 
             <div className="flex flex-col mt-auto">
               <div>
@@ -549,6 +966,25 @@ const MainPage = () => {
                   loading={loadingElements && !modelMetadata}
                 />
               )}
+              
+              {selectedProject && totalCost > 0 && (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<SendIcon />}
+                  onClick={handlePreviewCosts}
+                  sx={{
+                    fontWeight: 500,
+                    textTransform: "none",
+                    backgroundColor: "#0D0599",
+                    "&:hover": {
+                      backgroundColor: "#0A0477",
+                    },
+                  }}
+                >
+                  Kosten übermitteln
+                </Button>
+              )}
             </Box>
 
             <EbkpCostForm
@@ -557,6 +993,9 @@ const MainPage = () => {
               onKennwertChange={(code, value) =>
                 setKennwerte((prev) => ({ ...prev, [code]: value }))
               }
+              onQuantityTypeChange={handleQuantityTypeChange}
+              totalCost={totalCost}
+              elements={currentElements}
             />
 
             <Box sx={{ p: 2, mt: 4, mb: 0, border: "1px solid #e0e0e0", borderRadius: 1, background: "#f5f5f5", flex: 1, display: "flex", flexDirection: "column", width: "100%" }}>
@@ -577,6 +1016,14 @@ const MainPage = () => {
           </div>
         </div>
       </Box>
+      
+      <PreviewModal
+        open={previewModalOpen}
+        onClose={() => setPreviewModalOpen(false)}
+        onConfirm={handleConfirmCosts}
+        metaFile={metaFileForPreview}
+        calculatedTotalCost={totalCost}
+      />
     </Box>
   );
 };
