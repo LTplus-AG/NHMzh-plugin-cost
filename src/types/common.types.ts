@@ -1,3 +1,10 @@
+export interface AvailableQuantity {
+  value: number;
+  type: string; // 'area', 'length', 'volume', 'count'
+  unit: string; // 'm²', 'm', 'm³', 'Stk'
+  label: string; // 'Area', 'Length', 'Volume', 'Count'
+}
+
 export interface MongoElement {
   _id: string;
   project_id: string;
@@ -17,6 +24,7 @@ export interface MongoElement {
     value: number;
     type: string;
   };
+  available_quantities?: AvailableQuantity[]; // All available quantity options
   quantity_value?: number;
   is_structural?: boolean;
   is_external?: boolean;
