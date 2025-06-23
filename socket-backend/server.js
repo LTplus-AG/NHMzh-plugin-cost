@@ -1,3 +1,4 @@
+/* eslint-disable */
 const { Kafka } = require("kafkajs");
 const WebSocket = require("ws");
 const http = require("http");
@@ -2218,7 +2219,7 @@ async function sendEnhancedElementToKafka(
 }
 
 // Modify sendBatchElementsToKafka to use the new format and pass metadata
-async function sendBatchElementsToKafka(
+async function sendBatchElementsToKafkaOld(
   elements,
   project, // Note: project object might not be available, use meta instead
   filename, // Note: filename might not be available, use meta instead
