@@ -1,16 +1,16 @@
 import { ColumnWidthsType, ColumnHighlightsType } from "./types";
 
-// Define percentage-based column widths for better consistency
+// Define fixed pixel-based column widths for consistent alignment
 export const columnWidths: ColumnWidthsType = {
-  expandIcon: "3.5%",
-  ebkp: "9%",
-  bezeichnung: "30%",
-  menge: "9%",
-  einheit: "8%",
-  kennwert: "12%",
-  chf: "0%",
-  totalChf: "16%",
-  kommentar: "12.5%",
+  expandIcon: "50px",
+  ebkp: "120px",
+  bezeichnung: "350px",
+  menge: "110px",
+  einheit: "90px",
+  kennwert: "140px",
+  chf: "0px",
+  totalChf: "180px",
+  kommentar: "200px",
 };
 
 // Define column highlight colors
@@ -88,53 +88,51 @@ export const createCellStyles = (
   },
 });
 
-// Table container style
+// Table container style with consistent layout
 export const createTableContainerStyle = (isMobile: boolean) => ({
   height: "auto",
   mb: 1,
-  display: "flex",
-  flexDirection: "column",
-  maxWidth: "100%",
+  overflowX: "auto",
   width: "100%",
   "& .MuiTableCell-root": {
     boxSizing: "border-box" as const,
-    padding: isMobile ? "8px 0 8px 8px" : "16px 0 16px 8px", // Left padding only
-  },
-  // Add specific styling for numeric cells
-  "& .MuiTableCell-root[align='right']": {
-    paddingRight: "12px !important", // Normal right padding for numeric cells
+    padding: isMobile ? "8px" : "12px 8px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   "& .MuiTable-root": {
     tableLayout: "fixed",
     width: "100%",
-    minWidth: "1200px", // Add minimum width to ensure all columns are visible
+    minWidth: "1240px",
     borderCollapse: "collapse",
   },
   "& .MuiCollapse-root, & .MuiCollapse-wrapper, & .MuiCollapse-wrapperInner": {
     padding: 0,
     margin: 0,
   },
-  "& .MuiBox-root": {
-    padding: 0,
-    margin: 0,
-  },
 });
 
-// Table style
+// Table style with fixed layout for consistent column alignment
 export const tableStyle = {
   tableLayout: "fixed" as const,
   width: "100%",
-  minWidth: "1200px", // Add minimum width to all tables
+  minWidth: "1240px", // Minimum width based on sum of all column widths
   borderCollapse: "collapse" as const,
-  overflowX: "clip" as const,
   "& .MuiTableCell-alignRight": {
     textAlign: "right",
   },
   "& td": {
-    padding: "16px 0 16px 8px",
+    padding: "12px 8px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   "& th": {
-    padding: "16px 0 16px 8px",
+    padding: "12px 8px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
 };
 

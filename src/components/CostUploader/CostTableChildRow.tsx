@@ -481,12 +481,6 @@ const CostTableChildRow = ({
                   aria-label="grandchild items"
                   sx={{
                     ...tableStyle,
-                    "& td": {
-                      padding: isMobile ? "8px 0 8px 8px" : "16px 0 16px 8px",
-                    },
-                    "& th": {
-                      padding: isMobile ? "8px 0 8px 8px" : "16px 0 16px 8px",
-                    },
                   }}
                 >
                   <colgroup>

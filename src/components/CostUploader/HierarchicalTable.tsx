@@ -2,14 +2,14 @@ import { Alert, TableContainer, Paper, Table, TableBody } from "@mui/material";
 import { CostItem, MetaFile } from "./types";
 import { columnWidths } from "./styles";
 import { formatNumber } from "./utils";
-import TableHeader from "./TableHeader";
+import TableHeader, { SortConfig, SortableColumn, SortDirection } from "./TableHeader";
 import CostTableRow from "./CostTableRow";
 import {
   createTableContainerStyle,
   tableStyle,
   createCellStyles,
 } from "./styles";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Define CellStyles interface to match the one used in CostTableRow
 interface CellStyles {
@@ -42,8 +42,79 @@ const HierarchicalTable = ({
   isMobile,
   totalElements,
 }: HierarchicalTableProps) => {
+  // Sorting state
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    column: null,
+    direction: "asc",
+  });
+
   // Cell styles for alignment and formatting
   const cellStyles: CellStyles = createCellStyles(isMobile);
+
+  // Sorting logic
+  const handleSort = (column: SortableColumn) => {
+    setSortConfig((prevConfig) => ({
+      column,
+      direction:
+        prevConfig.column === column && prevConfig.direction === "asc"
+          ? "desc"
+          : "asc",
+    }));
+  };
+
+  // Function to sort data based on current sort configuration
+  const sortData = (data: CostItem[]): CostItem[] => {
+    if (!sortConfig.column) return data;
+
+    return [...data].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortConfig.column) {
+        case "ebkp":
+          aValue = a.ebkp || "";
+          bValue = b.ebkp || "";
+          break;
+        case "bezeichnung":
+          aValue = a.bezeichnung || "";
+          bValue = b.bezeichnung || "";
+          break;
+        case "menge":
+          aValue = a.menge || 0;
+          bValue = b.menge || 0;
+          break;
+        case "kennwert":
+          aValue = a.kennwert || 0;
+          bValue = b.kennwert || 0;
+          break;
+        case "totalChf":
+          aValue = a.totalChf || 0;
+          bValue = b.totalChf || 0;
+          break;
+        case "kommentar":
+          aValue = a.kommentar || "";
+          bValue = b.kommentar || "";
+          break;
+        default:
+          return 0;
+      }
+
+      // Handle string sorting
+      if (typeof aValue === "string" && typeof bValue === "string") {
+        const comparison = aValue.localeCompare(bValue, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        return sortConfig.direction === "asc" ? comparison : -comparison;
+      }
+
+      // Handle numeric sorting
+      const numA = Number(aValue) || 0;
+      const numB = Number(bValue) || 0;
+      const comparison = numA - numB;
+      return sortConfig.direction === "asc" ? comparison : -comparison;
+    });
+  };
 
   // Keep track of rows we've already auto-expanded
   const autoExpandedRef = useRef<Set<string>>(new Set());
@@ -173,8 +244,8 @@ const HierarchicalTable = ({
 
   if (!metaFile?.data) return null;
 
-  // Get the data array for rendering
-  const dataArray = getDataArray();
+  // Get the data array for rendering and apply sorting
+  const dataArray = sortData(getDataArray());
 
   return (
     <>
@@ -198,14 +269,7 @@ const HierarchicalTable = ({
           stickyHeader
           size="small"
           sx={{
-            flexGrow: 1,
             ...tableStyle,
-            "& td": {
-              padding: isMobile ? "8px 0 8px 8px" : "16px 0 16px 8px",
-            },
-            "& th": {
-              padding: isMobile ? "8px 0 8px 8px" : "16px 0 16px 8px",
-            },
           }}
         >
           {/* Use HTML colgroup element directly, not as a Material-UI component */}
@@ -220,7 +284,12 @@ const HierarchicalTable = ({
             <col style={{ width: columnWidths.kommentar }} />
           </colgroup>
 
-          <TableHeader isMobile={isMobile} cellStyles={cellStyles} />
+          <TableHeader 
+            isMobile={isMobile} 
+            cellStyles={cellStyles} 
+            sortConfig={sortConfig}
+            onSort={handleSort}
+          />
 
           <TableBody>
             {dataArray.map((parentItem: CostItem) => (
