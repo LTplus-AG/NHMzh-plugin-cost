@@ -7,7 +7,6 @@ import {
   MenuItem,
   FormControl,
   Chip,
-  Tooltip,
   Paper,
   InputAdornment,
   Button,
@@ -73,7 +72,7 @@ const EbkpCostForm: React.FC<Props> = ({
   kennwerte, 
   onKennwertChange, 
   onQuantityTypeChange, 
-  totalCost = 0,
+  totalCost: _totalCost,
   elements = []
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
@@ -99,7 +98,7 @@ const EbkpCostForm: React.FC<Props> = ({
 
     const groups = new Map<string, MongoElement[]>();
     
-    elements.forEach((element, index) => {
+    elements.forEach((element) => {
       let groupKey = '';
       
       switch (groupingStrategy) {
@@ -131,7 +130,7 @@ const EbkpCostForm: React.FC<Props> = ({
     const result = Array.from(groups.entries()).map(([groupKey, groupElements]) => {
       const availableQuantities = new Map<string, { value: number; unit: string; label: string }>();
       
-              groupElements.forEach((element, index) => {
+              groupElements.forEach((element) => {
           if (element.available_quantities && element.available_quantities.length > 0) {
           element.available_quantities.forEach(qty => {
             const existing = availableQuantities.get(qty.type);
