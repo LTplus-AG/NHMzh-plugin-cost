@@ -39,7 +39,7 @@ import {
   Close,
   CheckCircle,
   Warning,
-  Error,
+  Error as ErrorIcon,
 
   Refresh,
   Preview,
@@ -419,7 +419,7 @@ const ExcelDialog: React.FC<Props> = ({
                             <List dense>
                               {importResult.errors.map((error, index) => (
                                 <ListItem key={index}>
-                                  <ListItemIcon><Error fontSize="small" /></ListItemIcon>
+                                  <ListItemIcon><ErrorIcon fontSize="small" /></ListItemIcon>
                                   <ListItemText primary={error} />
                                 </ListItem>
                               ))}

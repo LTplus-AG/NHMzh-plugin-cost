@@ -31,7 +31,7 @@ import {
 import {
   CloudUpload,
   CheckCircle,
-  Error,
+  Error as ErrorIcon,
   Warning,
   Info,
   Close,
@@ -41,6 +41,7 @@ import {
   ExpandLess
 } from '@mui/icons-material';
 import { ExcelService, ExcelImportResult } from '../utils/excelService';
+import * as ExcelJS from 'exceljs';
 import { EbkpStat } from './EbkpCostForm';
 
 interface Props {
@@ -123,23 +124,54 @@ const ExcelImportDialog: React.FC<Props> = ({
     onClose();
   };
 
-  const downloadTemplate = () => {
-    // Create a simple template with current eBKP codes
-    const templateData = stats.map(stat => ({
-      'eBKP Code': stat.code,
-      'Kennwert (CHF)': currentKennwerte[stat.code] || ''
-    }));
+  const downloadTemplate = async () => {
+    // Create a workbook and worksheet
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Kostenkennwerte');
 
-    const csvContent = [
-      ['eBKP Code', 'Kennwert (CHF)'],
-      ...templateData.map(row => [row['eBKP Code'], row['Kennwert (CHF)']])
-    ].map(row => row.join(',')).join('\n');
+    // Add headers
+    const headers = ['eBKP Code', 'Kennwert (CHF)'];
+    const headerRow = worksheet.addRow(headers);
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF4472C4' }
+    };
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Add data rows from stats and currentKennwerte
+    stats.forEach(stat => {
+      const kennwert = currentKennwerte[stat.code] || '';
+      worksheet.addRow([stat.code, kennwert]);
+    });
+
+    // Auto-fit columns
+    worksheet.columns.forEach(column => {
+      if (column && column.eachCell) {
+        let maxLength = 0;
+        column.eachCell({ includeEmpty: true }, (cell) => {
+          const columnLength = cell.value ? cell.value.toString().length : 10;
+          if (columnLength > maxLength) {
+            maxLength = columnLength;
+          }
+        });
+        column.width = Math.min(maxLength + 2, 50);
+      }
+    });
+
+    // Write workbook to buffer
+    const buffer = await workbook.xlsx.writeBuffer();
+    
+    // Create Blob with correct Excel MIME type
+    const blob = new Blob([buffer], { 
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    });
+    
+    // Generate URL and trigger download with .xlsx filename
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `kostenkennwerte-template-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `kostenkennwerte-template-${new Date().toISOString().split('T')[0]}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -303,7 +335,7 @@ const ExcelImportDialog: React.FC<Props> = ({
               <List dense>
                 {importResult.errors.map((error, index) => (
                   <ListItem key={index}>
-                    <ListItemIcon><Error fontSize="small" /></ListItemIcon>
+                    <ListItemIcon><ErrorIcon fontSize="small" /></ListItemIcon>
                     <ListItemText primary={error} />
                   </ListItem>
                 ))}

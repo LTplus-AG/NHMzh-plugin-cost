@@ -43,7 +43,6 @@ export class ExcelService {
     
     // Add headers
     const headerRow = worksheet.addRow(headers);
-    headerRow.font = { bold: true };
     headerRow.fill = {
       type: 'pattern',
       pattern: 'solid',

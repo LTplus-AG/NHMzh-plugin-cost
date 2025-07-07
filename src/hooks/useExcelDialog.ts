@@ -56,11 +56,8 @@ export const useExcelDialog = () => {
   // Save config when it changes
   useEffect(() => {
     try {
-      const configToSave = {
-        ...exportConfig,
-        // Don't save the filename as it should be date-based
-        fileName: undefined
-      };
+      // Don't save the filename as it should be date-based
+      const { fileName, ...configToSave } = exportConfig;
       localStorage.setItem(EXCEL_CONFIG_KEY, JSON.stringify(configToSave));
     } catch (error) {
       console.warn('Failed to save Excel config to localStorage:', error);
