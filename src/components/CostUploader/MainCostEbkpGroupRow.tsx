@@ -8,9 +8,7 @@ import {
   Typography,
   Collapse,
   Box,
-  Chip,
 } from "@mui/material";
-import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import { HierarchicalCostEbkpGroup } from "../../types/cost.types";
 import CostEbkpGroupRow from "./CostEbkpGroupRow";

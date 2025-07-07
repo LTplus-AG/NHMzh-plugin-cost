@@ -1,34 +1,28 @@
+import SendIcon from "@mui/icons-material/Send";
 import {
-  Typography,
-  Select,
-  MenuItem,
-  FormControl,
-  FormLabel,
-  Stepper,
-  Step,
-  StepLabel,
-  Divider,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell,
-  TableContainer,
-  Chip,
   Box,
   Button,
   CircularProgress,
+  Divider,
+  FormControl,
+  FormLabel,
+  MenuItem,
+  Select,
   SelectChangeEvent,
+  Step,
+  StepLabel,
+  Stepper,
+  Typography
 } from "@mui/material";
-import SendIcon from "@mui/icons-material/Send";
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useKafka } from "../contexts/KafkaContext";
+import { MongoElement } from "../types/common.types";
+import PreviewModal, { EnhancedCostItem } from "./CostUploader/PreviewModal";
+import EbkpCostForm, { EbkpStat } from "./EbkpCostForm";
+import { MetaFile } from "./CostUploader/types";
 import ProjectMetadataDisplay, {
   CostProjectMetadata,
 } from "./ui/ProjectMetadataDisplay";
-import { MongoElement } from "../types/common.types";
-import EbkpCostForm, { EbkpStat } from "./EbkpCostForm";
-import PreviewModal, { EnhancedCostItem } from "./CostUploader/PreviewModal";
 
 const getAvailableQuantities = (el: MongoElement) => {
   const quantities = [];
@@ -37,7 +31,7 @@ const getAvailableQuantities = (el: MongoElement) => {
     return el.available_quantities;
   }
   
-  const elAny = el as any;
+  const elAny = el as MongoElement & { area?: number; length?: number; volume?: number };
   
   if (elAny.area && elAny.area > 0) {
     quantities.push({
@@ -135,13 +129,7 @@ const MainPage = () => {
 
   const [loadingElements, setLoadingElements] = useState(false);
   const [currentElements, setCurrentElements] = useState<MongoElement[]>([]);
-  const [elementsByEbkp, setElementsByEbkp] = useState<Record<string, number>>({});
-  const [elementsByCategory, setElementsByCategory] = useState<
-    Record<string, number>
-  >({});
 
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [selectedEbkps, setSelectedEbkps] = useState<string[]>([]);
 
   const [ebkpStats, setEbkpStats] = useState<EbkpStat[]>([]);
   const [kennwerte, setKennwerte] = useState<Record<string, number>>({});
@@ -149,7 +137,7 @@ const MainPage = () => {
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
-  const [metaFileForPreview, setMetaFileForPreview] = useState<any>(null);
+  const [metaFileForPreview, setMetaFileForPreview] = useState<MetaFile | null>(null);
 
   // Load project-specific data when project changes
   useEffect(() => {
@@ -220,8 +208,6 @@ const MainPage = () => {
     async (projectName: string | null) => {
       if (!projectName) {
         setCurrentElements([]);
-        setElementsByCategory({});
-        setElementsByEbkp({});
         setLoadingElements(false);
         setModelMetadata(null);
         setEbkpStats([]);
@@ -266,23 +252,17 @@ const MainPage = () => {
             });
           }
 
-          const categoryCounts: Record<string, number> = {};
-          const ebkpCounts: Record<string, number> = {};
           const statMap: Record<string, { 
             quantity: number; 
             unit?: string;
-            availableQuantities?: any[];
+            availableQuantities?: Array<{ value: number; type: string; unit: string; label: string }>;
             selectedQuantityType?: string;
             elements: MongoElement[];
           }> = {};
 
           elements.forEach((el: MongoElement) => {
-            const category = el.ifc_class || el.properties?.category || "Unknown";
-            categoryCounts[category] = (categoryCounts[category] || 0) + 1;
-
             const code =
               el.classification?.id || el.properties?.ebkph || "Unknown";
-            ebkpCounts[code] = (ebkpCounts[code] || 0) + 1;
 
             if (!statMap[code]) {
               statMap[code] = { 
@@ -337,8 +317,6 @@ const MainPage = () => {
             stat.selectedQuantityType = selectedType || (stat.availableQuantities[0]?.type);
           });
 
-          setElementsByCategory(categoryCounts);
-          setElementsByEbkp(ebkpCounts);
           const stats = Object.entries(statMap).map(([code, v]) => ({
             code,
             quantity: v.quantity,
@@ -359,8 +337,6 @@ const MainPage = () => {
           return elements;
         } else {
           setCurrentElements([]);
-          setElementsByCategory({});
-          setElementsByEbkp({});
           setEbkpStats([]);
           setModelMetadata(null);
           return [];
@@ -368,8 +344,6 @@ const MainPage = () => {
       } catch (error) {
         console.error("Error fetching project elements:", error);
         setCurrentElements([]);
-        setElementsByCategory({});
-        setElementsByEbkp({});
         setEbkpStats([]);
         setModelMetadata(null);
         return [];
@@ -410,8 +384,6 @@ const MainPage = () => {
       fetchElementsForProject(selectedProject);
     } else {
       setCurrentElements([]);
-      setElementsByCategory({});
-      setElementsByEbkp({});
       setEbkpStats([]);
       setModelMetadata(null);
     }
@@ -422,32 +394,7 @@ const MainPage = () => {
     setSelectedProject(newProjectName);
   };
 
-  const toggleCategoryFilter = (category: string) => {
-    if (selectedCategories.includes(category)) {
-      setSelectedCategories((prev) => prev.filter((c) => c !== category));
-    } else {
-      setSelectedEbkps([]);
-      setSelectedCategories((prev) =>
-        prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category]
-      );
-    }
-  };
 
-  const toggleEbkpFilter = (ebkp: string) => {
-    if (selectedEbkps.includes(ebkp)) {
-      setSelectedEbkps((prev) => prev.filter((e) => e !== ebkp));
-    } else {
-      setSelectedCategories([]);
-      setSelectedEbkps((prev) =>
-        prev.includes(ebkp) ? prev.filter((e) => e !== ebkp) : [...prev, ebkp]
-      );
-    }
-  };
-
-  const clearFilters = () => {
-    setSelectedCategories([]);
-    setSelectedEbkps([]);
-  };
 
   const clearSavedData = () => {
     if (!selectedProject) return;
@@ -491,9 +438,11 @@ const MainPage = () => {
         areaSource: "BIM"
       }));
 
-    const metaFile = {
-      file: { name: `${selectedProject}_costs.json` },
-      data: costItems
+    const metaFile: MetaFile = {
+      file: new File([JSON.stringify(costItems)], `${selectedProject}_costs.json`, { type: 'application/json' }),
+      data: costItems,
+      headers: ['eBKP', 'Bezeichnung', 'Menge', 'Einheit', 'Kennwert', 'CHF', 'Total CHF'],
+      valid: true
     };
 
     setMetaFileForPreview(metaFile);
@@ -508,7 +457,7 @@ const MainPage = () => {
       }
 
       // Get WebSocket connection
-      const ws = (window as any).ws;
+      const ws = (window as { ws?: WebSocket }).ws;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn("WebSocket not connected, trying to reconnect");
         try {
@@ -564,7 +513,10 @@ const MainPage = () => {
         },
       };
 
-      const wsToUse = (window as any).ws;
+      const wsToUse = (window as { ws?: WebSocket }).ws;
+      if (!wsToUse) {
+        throw new Error("WebSocket not available");
+      }
       wsToUse.send(JSON.stringify(message));
       console.log(`Full cost batch sent to server for project ${selectedProject}`);
 
@@ -595,13 +547,14 @@ const MainPage = () => {
         });
       });
 
-      if ((response as any).status === "success") {
+      const responseData = response as { status?: string; message?: string };
+      if (responseData.status === "success") {
         console.log('Cost data uploaded successfully:', response);
         // Close the preview modal
         setPreviewModalOpen(false);
         // Optionally show success message or refresh data
       } else {
-        console.error('Error saving cost data backend:', (response as any).message || "Unknown error");
+        console.error('Error saving cost data backend:', responseData.message || "Unknown error");
       }
       
     } catch (error) {
@@ -615,7 +568,7 @@ const MainPage = () => {
     const statMap: Record<string, { 
       quantity: number; 
       unit?: string;
-      availableQuantities?: any[];
+      availableQuantities?: Array<{ value: number; type: string; unit: string; label: string }>;
       selectedQuantityType?: string;
       elements: MongoElement[];
     }> = {};
@@ -688,7 +641,6 @@ const MainPage = () => {
   }, [currentElements]);
 
   const handleQuantityTypeChange = useCallback((code: string, quantityType: string) => {
-    // console.log(`🔄 Changing quantity type for ${code} to ${quantityType}`);
     
     const newSelections = {
       ...quantitySelections,
@@ -699,149 +651,14 @@ const MainPage = () => {
     recalculateStats(newSelections);
   }, [quantitySelections, recalculateStats]);
 
-  const getFilteredElements = () => {
-    if (selectedCategories.length === 0 && selectedEbkps.length === 0) {
-      return currentElements;
-    }
-    return currentElements.filter((element) => {
-      const category = element.ifc_class || element.properties?.category || "Unknown";
-      const ebkp = element.classification?.id || element.properties?.ebkph || "Unknown";
-      if (selectedCategories.length > 0) {
-        return selectedCategories.includes(category);
-      } else if (selectedEbkps.length > 0) {
-        return selectedEbkps.includes(ebkp);
-      }
-      return true;
-    });
-  };
+
 
   const totalCost = ebkpStats.reduce(
     (sum, s) => sum + (kennwerte[s.code] || 0) * s.quantity,
     0
   );
 
-  const renderElementStats = () => {
-    if (loadingElements || loadingProjects) {
-      return (
-        <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
-          <CircularProgress size={24} />
-        </Box>
-      );
-    }
-    if (currentElements.length === 0) {
-      return (
-        <Typography variant="body2" color="text.secondary">
-          Keine Elemente gefunden für dieses Projekt.
-        </Typography>
-      );
-    }
-    const filteredElements = getFilteredElements();
-    return (
-      <>
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }} color="common.black">
-            Elemente nach Kategorie:
-          </Typography>
-          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-            {Object.entries(elementsByCategory).map(([category, count]) => (
-              <Chip
-                key={category}
-                label={`${category}: ${count}`}
-                size="small"
-                variant={selectedCategories.includes(category) ? "filled" : "outlined"}
-                color={selectedCategories.includes(category) ? "primary" : "default"}
-                onClick={() => toggleCategoryFilter(category)}
-                sx={{ cursor: "pointer" }}
-              />
-            ))}
-          </Box>
-        </Box>
 
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }} color="common.black">
-            Elemente nach eBKP:
-          </Typography>
-          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-            {Object.entries(elementsByEbkp).map(([code, count]) => (
-              <Chip
-                key={code}
-                label={`${code}: ${count}`}
-                size="small"
-                variant={selectedEbkps.includes(code) ? "filled" : "outlined"}
-                color={selectedEbkps.includes(code) ? "primary" : "default"}
-                onClick={() => toggleEbkpFilter(code)}
-                sx={{ cursor: "pointer" }}
-              />
-            ))}
-          </Box>
-        </Box>
-
-        <Box sx={{ mb: 1, flexGrow: 1, display: "flex", flexDirection: "column" }}>
-          <Box
-            sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              mb: 1,
-            }}
-          >
-            <Typography variant="subtitle2" color="common.black">
-              Neueste Elemente:
-              {(selectedCategories.length > 0 || selectedEbkps.length > 0) &&
-                ` (${filteredElements.length} gefiltert)`}
-            </Typography>
-
-            {(selectedCategories.length > 0 || selectedEbkps.length > 0) && (
-              <Button
-                size="small"
-                variant="text"
-                color="primary"
-                onClick={clearFilters}
-                sx={{ minWidth: 0, p: 0.5 }}
-              >
-                Filter löschen
-              </Button>
-            )}
-          </Box>
-
-          <TableContainer sx={{ overflow: "auto", height: "calc(100vh - 500px)", minHeight: "200px" }}>
-            <Table size="small" stickyHeader>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Element ID</TableCell>
-                  <TableCell>Typ</TableCell>
-                  <TableCell>Name</TableCell>
-                  <TableCell>Level</TableCell>
-                  <TableCell>Material</TableCell>
-                  <TableCell>eBKP</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredElements.map((element) => (
-                    <TableRow key={element.global_id || element._id}>
-                    <TableCell>{(element.global_id || element._id).substring(0, 6)}...</TableCell>
-                    <TableCell>
-                      {element.type_name || element.element_type || element.ifc_class || "—"}
-                    </TableCell>
-                    <TableCell>{element.name || "—"}</TableCell>
-                    <TableCell>{element.level || element.properties?.level || "—"}</TableCell>
-                    <TableCell>
-                      {element.materials && element.materials.length > 0
-                        ? element.materials[0].name
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {element.classification?.id || element.properties?.ebkph || "—"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Box>
-      </>
-    );
-  };
 
   return (
     <Box

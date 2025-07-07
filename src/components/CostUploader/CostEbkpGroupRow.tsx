@@ -1,4 +1,4 @@
-import React, { ChangeEvent } from "react";
+import React from "react";
 import {
   TableRow,
   TableCell,
@@ -13,6 +13,7 @@ import {
   Collapse,
   Table,
   TableBody,
+  SelectChangeEvent,
 } from "@mui/material";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
@@ -59,7 +60,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
     onKennwertChange(group.code, isNaN(value) ? 0 : value);
   };
 
-  const handleQuantityTypeChange = (e: ChangeEvent<HTMLSelectElement>) => {
+  const handleQuantityTypeChange = (e: SelectChangeEvent<string>) => {
     if (onQuantityTypeChange) {
       onQuantityTypeChange(group.code, e.target.value);
     }
