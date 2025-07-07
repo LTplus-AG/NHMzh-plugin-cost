@@ -82,7 +82,6 @@ const EbkpCostForm: React.FC<Props> = ({
   kennwerte, 
   onKennwertChange, 
   onQuantityTypeChange, 
-  totalCost: _totalCost,
   elements = []
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
@@ -224,7 +223,7 @@ const EbkpCostForm: React.FC<Props> = ({
             }
           });
                   } else {
-            const elementAny = element as any;
+            const elementAny = element as MongoElement & { area?: number; length?: number; volume?: number };
           if (elementAny.area && elementAny.area > 0) {
             const existing = availableQuantities.get('area');
             if (existing) {
@@ -304,7 +303,7 @@ const EbkpCostForm: React.FC<Props> = ({
     onKennwertChange(groupKey, isNaN(value) ? 0 : value);
   };
 
-  const handleQuantityTypeChange = (groupKey: string) => (e: any) => {
+  const handleQuantityTypeChange = (groupKey: string) => (e: SelectChangeEvent<string>) => {
     if (onQuantityTypeChange) {
       onQuantityTypeChange(groupKey, e.target.value);
     }
@@ -319,7 +318,7 @@ const EbkpCostForm: React.FC<Props> = ({
   }, [groupedData]);
 
   const filteredAndSortedData = useMemo(() => {
-          let filtered = groupedData.filter(group => {
+          const filtered = groupedData.filter(group => {
         if (searchTerm) {
         const searchLower = searchTerm.toLowerCase();
         const matchesGroup = group.displayName.toLowerCase().includes(searchLower) ||
@@ -360,7 +359,7 @@ const EbkpCostForm: React.FC<Props> = ({
 
     // Sort
     filtered.sort((a, b) => {
-      let aValue: any, bValue: any;
+      let aValue: string | number, bValue: string | number;
       
       switch (sortField) {
         case 'group':
@@ -393,10 +392,14 @@ const EbkpCostForm: React.FC<Props> = ({
           : bValue.localeCompare(aValue);
       }
 
+      // Convert to numbers for arithmetic operations
+      const numA = typeof aValue === 'number' ? aValue : 0;
+      const numB = typeof bValue === 'number' ? bValue : 0;
+      
       if (sortDirection === 'asc') {
-        return aValue - bValue;
+        return numA - numB;
       } else {
-        return bValue - aValue;
+        return numB - numA;
       }
     });
 

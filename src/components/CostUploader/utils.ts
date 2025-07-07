@@ -344,7 +344,7 @@ export const parseExcelFile = async (
           if (cellValue !== null && cellValue !== undefined) {
             if (typeof cellValue === 'object' && 'richText' in cellValue && Array.isArray(cellValue.richText)) {
               // Handle rich text objects by concatenating text fragments
-              rowData[header] = cellValue.richText.map((fragment: any) => fragment.text || '').join('');
+              rowData[header] = cellValue.richText.map((fragment: { text?: string }) => fragment.text || '').join('');
             } else if (typeof cellValue === 'string' || typeof cellValue === 'number') {
               rowData[header] = cellValue;
             } else {

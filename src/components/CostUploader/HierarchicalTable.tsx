@@ -67,8 +67,8 @@ const HierarchicalTable = ({
     if (!sortConfig.column) return data;
 
     return [...data].sort((a, b) => {
-      let aValue: any;
-      let bValue: any;
+      let aValue: string | number;
+      let bValue: string | number;
 
       switch (sortConfig.column) {
         case "ebkp":
