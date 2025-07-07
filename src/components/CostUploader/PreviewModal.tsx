@@ -267,9 +267,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       );
       currentElementInfo.elementCount = uniqueCodes.size * 3; // Assume ~3 elements per code
 
-      console.log(
-        `Using ${uniqueCodes.size} eBKP codes from Excel as fallback`
-      );
+
     }
 
     setElementInfo(currentElementInfo);
@@ -583,20 +581,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
     firstLetterCounts[firstChar] = (firstLetterCounts[firstChar] || 0) + 1;
   });
 
-  // Log detailed statistics to console for debugging
-  console.log("Match statistics (detailed):", {
-    totalCodesWithMatches, // Number of Excel codes with BIM matches
-    totalCodesInExcel, // Total number of Excel codes (excluding system items)
-    codeMatchPercentage, // % of Excel codes matched with BIM
-    totalElementsToUpdate, // Number of BIM elements that will receive costs
-    totalAvailableElements, // Total number of BIM elements available
-    bimCoveragePercentage, // % of BIM elements covered
-    uniqueBimCodeCount, // Number of unique BIM codes
-    bimCodeCoveragePercentage, // % of unique BIM codes covered
-    directMatchCount, // Number of direct (exact) matches
-    directMatchPercentage, // % of matches that are direct
-    matchingQualityScore, // Overall quality score
-  });
+
 
   // Corrected costByGroup calculation
   const costByGroup = useMemo(() => {
@@ -651,7 +636,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       (m) => !m.costUnit || m.costUnit <= 0
     ).length;
     if (zeroUnitCostCount > 0) {
-      console.log(`Skipping ${zeroUnitCostCount} matches with zero unit cost`);
+      // Skip items with zero unit cost
     }
 
     // Prepare the enhanced data to send to backend
@@ -706,28 +691,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
         } as EnhancedCostItem;
       });
 
-    console.log(
-      `Sending ${enhancedData.length} matched QTO elements to update costElements collection (Excel data already saved to costData during upload - NOT deleting costData here)`
-    );
 
-    // Log the sum of the enhancedData being sent
-    const sumOfEnhancedData = enhancedData.reduce(
-      (sum, item) => sum + (item.cost || 0),
-      0
-    );
-    console.log(
-      "[PreviewModal] handleConfirm: Sum of enhancedData.cost being sent:",
-      sumOfEnhancedData
-    );
-    console.log(
-      "[PreviewModal] handleConfirm: Sample enhancedData items:",
-      enhancedData.slice(0, 5).map((i) => ({
-        ebkp: i.ebkp,
-        cost: i.cost,
-        cost_unit: i.cost_unit,
-        area: i.area,
-      }))
-    );
 
     // First close the modal to avoid blocking UI
     onClose();

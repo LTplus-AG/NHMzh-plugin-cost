@@ -248,6 +248,8 @@ const MainPage = () => {
         const elements = Array.isArray(data) ? data : data.elements || [];
         const metadata = data.modelMetadata || null;
 
+
+
         if (elements && elements.length > 0) {
           setCurrentElements(elements);
           if (metadata && metadata.filename) {
@@ -293,6 +295,8 @@ const MainPage = () => {
             }
             statMap[code].elements.push(el);
           });
+
+
 
           // Now calculate aggregated quantities for each EBKP code
           Object.keys(statMap).forEach(code => {
@@ -341,7 +345,9 @@ const MainPage = () => {
             unit: v.unit,
             availableQuantities: v.availableQuantities,
             selectedQuantityType: v.selectedQuantityType,
+            elements: v.elements,
           }));
+
           setEbkpStats(stats);
           setKennwerte((prev) => {
             const updated: Record<string, number> = {};
@@ -674,9 +680,10 @@ const MainPage = () => {
       unit: v.unit,
       availableQuantities: v.availableQuantities,
       selectedQuantityType: v.selectedQuantityType,
+      elements: v.elements,
     }));
     
-    // console.log('📊 New stats calculated:', stats);
+
     setEbkpStats(stats);
   }, [currentElements]);
 
@@ -998,21 +1005,7 @@ const MainPage = () => {
               elements={currentElements}
             />
 
-            <Box sx={{ p: 2, mt: 4, mb: 0, border: "1px solid #e0e0e0", borderRadius: 1, background: "#f5f5f5", flex: 1, display: "flex", flexDirection: "column", width: "100%" }}>
-              <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2 }} color="common.black">
-                Projektelemente
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => fetchElementsForProject(selectedProject)}
-                  disabled={loadingElements || loadingProjects}
-                  sx={{ ml: 1, height: 20, fontSize: "0.7rem", py: 0 }}
-                >
-                  Aktualisieren
-                </Button>
-              </Typography>
-              <Box sx={{ flex: 1, overflow: "visible" }}>{renderElementStats()}</Box>
-            </Box>
+
           </div>
         </div>
       </Box>

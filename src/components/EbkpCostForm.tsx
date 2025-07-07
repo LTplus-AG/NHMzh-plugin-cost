@@ -16,6 +16,13 @@ import {
   InputLabel,
   OutlinedInput,
   SelectChangeEvent,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Tooltip,
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
 import FilterListIcon from "@mui/icons-material/FilterList";
@@ -24,7 +31,10 @@ import ClearIcon from "@mui/icons-material/Clear";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import GroupWorkIcon from "@mui/icons-material/GroupWork";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import { MongoElement } from "../types/common.types";
+import { useEbkpGroups } from "../hooks/useEbkpGroups";
+import MainCostEbkpGroupRow from "./CostUploader/MainCostEbkpGroupRow";
 
 export interface EbkpStat {
   code: string;
@@ -82,6 +92,75 @@ const EbkpCostForm: React.FC<Props> = ({
   const [groupingStrategy, setGroupingStrategy] = useState<GroupingStrategy>('ebkp');
   const [quantityTypeFilter, setQuantityTypeFilter] = useState<string[]>([]);
   const [hasKennwertFilter, setHasKennwertFilter] = useState<'all' | 'with' | 'without'>('all');
+  
+  // Hierarchical table state
+  const [expandedMainGroups, setExpandedMainGroups] = useState<string[]>([]);
+  const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
+  
+  // Use hierarchical groups hook for EBKP grouping
+  const { ebkpGroups, hierarchicalGroups } = useEbkpGroups(stats, kennwerte);
+
+  // Expand/collapse functionality
+  const toggleMainGroup = (mainGroup: string) => {
+    setExpandedMainGroups(prev => 
+      prev.includes(mainGroup) 
+        ? prev.filter(g => g !== mainGroup)
+        : [...prev, mainGroup]
+    );
+  };
+
+  const toggleEbkpGroup = (code: string) => {
+    setExpandedEbkp(prev => 
+      prev.includes(code) 
+        ? prev.filter(c => c !== code)
+        : [...prev, code]
+    );
+  };
+
+  // Determine if all groups are expanded
+  const areAllGroupsExpanded = useMemo(() => {
+    if (hierarchicalGroups) {
+      // Check if all main groups are expanded
+      const allMainGroupsExpanded = hierarchicalGroups.every(group => 
+        expandedMainGroups.includes(group.mainGroup)
+      );
+      
+      // Check if all sub-groups are expanded
+      const allSubGroupsCodes = hierarchicalGroups.flatMap(group => 
+        group.subGroups.map(subGroup => subGroup.code)
+      );
+      const allSubGroupsExpanded = allSubGroupsCodes.every(code => 
+        expandedEbkp.includes(code)
+      );
+      
+      return allMainGroupsExpanded && allSubGroupsExpanded;
+    } else {
+      // For flat view, check if all EBKP groups are expanded
+      return ebkpGroups.every(group => expandedEbkp.includes(group.code));
+    }
+  }, [hierarchicalGroups, ebkpGroups, expandedMainGroups, expandedEbkp]);
+
+  const toggleExpandAll = () => {
+    if (areAllGroupsExpanded) {
+      // Collapse all
+      setExpandedMainGroups([]);
+      setExpandedEbkp([]);
+    } else {
+      // Expand all
+      if (hierarchicalGroups) {
+        const allMainGroups = hierarchicalGroups.map(group => group.mainGroup);
+        const allSubGroupsCodes = hierarchicalGroups.flatMap(group => 
+          group.subGroups.map(subGroup => subGroup.code)
+        );
+        setExpandedMainGroups(allMainGroups);
+        setExpandedEbkp(allSubGroupsCodes);
+      } else {
+        // For flat view, expand all EBKP groups
+        const allCodes = ebkpGroups.map(group => group.code);
+        setExpandedEbkp(allCodes);
+      }
+    }
+  };
 
   const groupedData = useMemo((): GroupedData[] => {
     if (groupingStrategy === 'ebkp') {
@@ -535,29 +614,99 @@ const EbkpCostForm: React.FC<Props> = ({
         )}
       </Box>
 
-      {/* Cards Grid - Back to original beautiful design */}
-      <Box sx={{ display: 'grid', gap: 2 }}>
-        {filteredAndSortedData.length === 0 ? (
-          <Paper elevation={1} sx={{ p: 4, textAlign: 'center' }}>
-            <Typography variant="h6" color="text.secondary" gutterBottom>
-              Keine Ergebnisse gefunden
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {searchTerm ? `Keine Gruppen entsprechen "${searchTerm}"` : 'Keine Gruppen entsprechen den aktuellen Filtern'}
-            </Typography>
-            {activeFiltersCount > 0 && (
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={clearAllFilters}
-                sx={{ mt: 2 }}
-                startIcon={<ClearIcon />}
-              >
-                Filter zurücksetzen
-              </Button>
-            )}
-          </Paper>
-        ) : (
+      {/* Render based on grouping strategy */}
+      {groupingStrategy === 'ebkp' && hierarchicalGroups ? (
+        /* Hierarchical EBKP Table */
+        <TableContainer component={Paper} elevation={2}>
+          <Table>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.04)" }}>
+                <TableCell sx={{ py: 2, fontWeight: 'bold' }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Tooltip title={areAllGroupsExpanded ? "Alle zuklappen" : "Alle aufklappen"}>
+                      <IconButton
+                        size="small"
+                        onClick={toggleExpandAll}
+                        sx={{
+                          color: "primary.main",
+                          backgroundColor: areAllGroupsExpanded ? "rgba(25, 118, 210, 0.08)" : "transparent",
+                          "&:hover": {
+                            backgroundColor: "rgba(25, 118, 210, 0.12)",
+                          },
+                          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                          transform: areAllGroupsExpanded ? "rotate(180deg)" : "rotate(0deg)",
+                        }}
+                      >
+                        <ChevronRightIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    EBKP Gruppe / Bezeichnung
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ py: 2, fontWeight: 'bold', textAlign: 'right' }}>
+                  Menge
+                </TableCell>
+                <TableCell sx={{ py: 2, fontWeight: 'bold', textAlign: 'right' }}>
+                  Kennwert (CHF)
+                </TableCell>
+                <TableCell sx={{ py: 2, fontWeight: 'bold', textAlign: 'right' }}>
+                  Gesamtkosten
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {hierarchicalGroups.map((group) => (
+                <MainCostEbkpGroupRow
+                  key={group.mainGroup}
+                  group={group}
+                  isExpanded={expandedMainGroups.includes(group.mainGroup)}
+                  toggleExpand={toggleMainGroup}
+                  expandedEbkp={expandedEbkp}
+                  toggleExpandEbkp={toggleEbkpGroup}
+                  kennwerte={kennwerte}
+                  onKennwertChange={onKennwertChange}
+                  onQuantityTypeChange={onQuantityTypeChange}
+                />
+              ))}
+              {hierarchicalGroups.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} sx={{ textAlign: 'center', py: 4 }}>
+                    <Typography variant="h6" color="text.secondary" gutterBottom>
+                      Keine EBKP-Gruppen verfügbar
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Es wurden keine Elemente mit EBKP-Klassifikation gefunden.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      ) : (
+        /* Cards Grid - For non-EBKP grouping strategies */
+        <Box sx={{ display: 'grid', gap: 2 }}>
+          {filteredAndSortedData.length === 0 ? (
+            <Paper elevation={1} sx={{ p: 4, textAlign: 'center' }}>
+              <Typography variant="h6" color="text.secondary" gutterBottom>
+                Keine Ergebnisse gefunden
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {searchTerm ? `Keine Gruppen entsprechen "${searchTerm}"` : 'Keine Gruppen entsprechen den aktuellen Filtern'}
+              </Typography>
+              {activeFiltersCount > 0 && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={clearAllFilters}
+                  sx={{ mt: 2 }}
+                  startIcon={<ClearIcon />}
+                >
+                  Filter zurücksetzen
+                </Button>
+              )}
+            </Paper>
+          ) : (
           filteredAndSortedData.map((group) => {
             const selectedQuantity = getSelectedQuantity(group);
             
@@ -803,8 +952,9 @@ const EbkpCostForm: React.FC<Props> = ({
               </Paper>
             );
           })
-        )}
-      </Box>
+          )}
+        </Box>
+      )}
     </Box>
   );
 };
