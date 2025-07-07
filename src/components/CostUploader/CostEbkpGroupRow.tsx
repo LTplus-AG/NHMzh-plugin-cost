@@ -1,4 +1,4 @@
-import React from "react";
+import React, { ChangeEvent } from "react";
 import {
   TableRow,
   TableCell,
@@ -59,7 +59,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
     onKennwertChange(group.code, isNaN(value) ? 0 : value);
   };
 
-  const handleQuantityTypeChange = (e: any) => {
+  const handleQuantityTypeChange = (e: ChangeEvent<HTMLSelectElement>) => {
     if (onQuantityTypeChange) {
       onQuantityTypeChange(group.code, e.target.value);
     }

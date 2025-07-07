@@ -634,7 +634,7 @@ const EbkpCostForm: React.FC<Props> = ({
                             backgroundColor: "rgba(25, 118, 210, 0.12)",
                           },
                           transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                          transform: areAllGroupsExpanded ? "rotate(180deg)" : "rotate(0deg)",
+                          transform: areAllGroupsExpanded ? "rotate(90deg)" : "rotate(0deg)",
                         }}
                       >
                         <ChevronRightIcon fontSize="small" />
