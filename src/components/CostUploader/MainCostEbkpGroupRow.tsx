@@ -1,16 +1,19 @@
-import React from "react";
+import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import {
+  Box,
+  Collapse,
+  IconButton,
   Table,
   TableBody,
-  TableRow,
   TableCell,
-  IconButton,
+  TableRow,
+  Tooltip,
   Typography,
-  Collapse,
-  Box,
 } from "@mui/material";
-import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
+import React from "react";
 import { HierarchicalCostEbkpGroup } from "../../types/cost.types";
+import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
+import { getElementQuantityValue } from "../../utils/quantityUtils";
 import CostEbkpGroupRow from "./CostEbkpGroupRow";
 
 interface MainCostEbkpGroupRowProps {
@@ -50,60 +53,107 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
     }).format(value);
   };
 
+  // Check if ANY subgroup has elements with zero quantities for their selected quantity type
+  const hasZeroQuantity = group.subGroups.some(subGroup => {
+    const selectedQuantityType = subGroup.selectedQuantityType || subGroup.availableQuantities[0]?.type;
+    return subGroup.elements.some(element => {
+      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
+      return isZeroQuantity(quantityValue);
+    });
+  });
+
+  // Count total elements with missing quantities across all subgroups
+  const totalElementsWithMissingQuantities = group.subGroups.reduce((total, subGroup) => {
+    const selectedQuantityType = subGroup.selectedQuantityType || subGroup.availableQuantities[0]?.type;
+    // Count elements in this subgroup that have zero quantities for the selected type
+    const elementsWithZeroQuantity = subGroup.elements.filter(element => {
+      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
+      return isZeroQuantity(quantityValue);
+    });
+    return total + elementsWithZeroQuantity.length;
+  }, 0);
+
   return (
     <>
       {/* Main Group Header Row */}
-      <TableRow 
-        sx={{ 
-          backgroundColor: "rgba(0, 0, 0, 0.04)",
-          "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.08)" }
-        }}
+      <Tooltip 
+        title={hasZeroQuantity ? `Enthält Elemente ohne Mengen - Hauptgruppe ${group.mainGroup}` : ''}
+        arrow
+        placement="left"
       >
-        <TableCell sx={{ py: 2, pl: 2 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-            <IconButton
-              size="small"
-              onClick={() => toggleExpand(group.mainGroup)}
-              sx={{
-                p: 0.5,
-                transition: "transform 0.2s ease",
-                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-              }}
-            >
-              <KeyboardArrowRightIcon fontSize="small" />
-            </IconButton>
-            <Typography variant="subtitle1" fontWeight="bold" color="primary">
-              {group.mainGroup === "_OTHER_" ? "" : group.mainGroup}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {group.mainGroup === "_OTHER_" ? "Sonstige Klassifikationen" : group.mainGroupName}
-            </Typography>
+        <TableRow 
+          sx={getZeroQuantityStyles(hasZeroQuantity, { 
+            backgroundColor: isExpanded ? 'rgba(25, 118, 210, 0.08)' : 'rgba(0, 0, 0, 0.04)',
+            "&:hover": { 
+              backgroundColor: isExpanded ? 'rgba(25, 118, 210, 0.12)' : 'rgba(0, 0, 0, 0.08)'
+            },
+            cursor: 'pointer',
+          })}
+          onClick={() => toggleExpand(group.mainGroup)}
+        >
+          <TableCell sx={{ py: 2, pl: hasZeroQuantity ? 1.5 : 2 }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleExpand(group.mainGroup);
+                }}
+                sx={{
+                  mr: 1,
+                  p: 0.5,
+                  transition: "transform 0.2s ease",
+                  transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                }}
+              >
+                <KeyboardArrowRightIcon fontSize="small" />
+              </IconButton>
+              <Typography variant="subtitle1" fontWeight="bold" color="primary">
+                {group.mainGroup === "_OTHER_" ? "" : group.mainGroup}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {group.mainGroup === "_OTHER_" ? "Sonstige Klassifikationen" : group.mainGroupName}
+              </Typography>
+              <Box sx={{ ml: 1, display: 'flex', flexDirection: 'column' }}>
+                <Typography variant="body2" sx={{ 
+                  color: "text.secondary",
+                  fontSize: "0.8rem",
+                  fontWeight: 500
+                }}>
+                  {group.subGroups.length} Gruppen • {group.totalElements} Elemente
+                </Typography>
+                {totalElementsWithMissingQuantities > 0 && (
+                  <Typography variant="caption" sx={{ 
+                    color: 'warning.main', 
+                    fontWeight: 'bold',
+                    fontSize: '0.65rem'
+                  }}>
+                    {totalElementsWithMissingQuantities} ohne Mengen
+                  </Typography>
+                )}
+              </Box>
+            </Box>
+          </TableCell>
+          <TableCell sx={{ py: 2, textAlign: "right" }}>
             <Typography variant="body2" sx={{ 
-              color: "text.secondary",
-              fontSize: "0.8rem",
-              fontWeight: 500,
-              ml: 1
+              fontWeight: hasZeroQuantity ? 'bold' : 'medium',
+              color: hasZeroQuantity ? 'warning.main' : 'inherit'
             }}>
-              {group.subGroups.length} Gruppen • {group.totalElements} Elemente
+              {formatQuantity(group.totalQuantity)} m²
             </Typography>
-          </Box>
-        </TableCell>
-        <TableCell sx={{ py: 2, textAlign: "right" }}>
-          <Typography variant="body2" color="text.secondary">
-            {formatQuantity(group.totalQuantity)}
-          </Typography>
-        </TableCell>
-        <TableCell sx={{ py: 2, textAlign: "right" }}>
-          <Typography variant="body2" color="text.secondary">
-            -
-          </Typography>
-        </TableCell>
-        <TableCell sx={{ py: 2, textAlign: "right" }}>
-          <Typography variant="subtitle2" fontWeight="bold">
-            {formatCurrency(group.totalCost)}
-          </Typography>
-        </TableCell>
-      </TableRow>
+          </TableCell>
+          <TableCell sx={{ py: 2, textAlign: "right" }}>
+            <Typography variant="body2" color="text.secondary">
+              -
+            </Typography>
+          </TableCell>
+          <TableCell sx={{ py: 2, textAlign: "right" }}>
+            <Typography variant="subtitle2" fontWeight="bold">
+              {formatCurrency(group.totalCost)}
+            </Typography>
+          </TableCell>
+        </TableRow>
+      </Tooltip>
 
       {/* Collapsible Sub-Groups */}
       <TableRow>

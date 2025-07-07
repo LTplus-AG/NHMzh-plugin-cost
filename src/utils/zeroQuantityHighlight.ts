@@ -15,26 +15,25 @@ export const getZeroQuantityStyles = (
 
   return {
     ...baseStyles,
-    backgroundColor: 'rgba(255, 152, 0, 0.08)', // Subtle orange background
-    borderLeft: '3px solid rgba(255, 152, 0, 0.4)', // Orange left border
+    backgroundColor: 'rgba(255, 152, 0, 0.06)', // More subtle orange background
     position: 'relative',
-    '&::before': {
+    '&::after': {
       content: '""',
       position: 'absolute',
       top: 0,
-      left: 0,
+      left: 0, // Start from the left edge
       right: 0,
       bottom: 0,
-      background: 'linear-gradient(45deg, transparent 48%, rgba(255, 152, 0, 0.1) 49%, rgba(255, 152, 0, 0.1) 51%, transparent 52%)',
-      backgroundSize: '20px 20px',
+      background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(255, 152, 0, 0.03) 8px, rgba(255, 152, 0, 0.03) 16px)',
       pointerEvents: 'none',
-      opacity: 0.3,
+      zIndex: 0,
     },
     '&:hover': {
-      backgroundColor: 'rgba(255, 152, 0, 0.12)',
-      '&::before': {
-        opacity: 0.4,
-      },
+      backgroundColor: 'rgba(255, 152, 0, 0.10)',
+    },
+    '& > *': {
+      position: 'relative',
+      zIndex: 1, // Ensure content is above the pattern
     },
     transition: 'all 0.2s ease-in-out',
   };
@@ -72,6 +71,30 @@ export const getZeroQuantityTooltip = (elementType?: string): string => {
     return `${baseText} - ${elementType}`;
   }
   return baseText;
+};
+
+// Check if an element/item has zero quantity across different quantity types
+export const hasZeroQuantityInAnyType = (item: {
+  quantity?: number | null;
+  area?: number | null;
+  length?: number | null;
+  volume?: number | null;
+  count?: number | null;
+}): boolean => {
+  const quantities = [
+    item.quantity,
+    item.area,
+    item.length,
+    item.volume,
+    item.count,
+  ];
+  
+  // If all quantities are null/undefined, consider it zero
+  const hasAnyQuantity = quantities.some(q => q !== null && q !== undefined);
+  if (!hasAnyQuantity) return true;
+  
+  // Check if all defined quantities are zero
+  return quantities.every(q => q === null || q === undefined || isZeroQuantity(q));
 };
 
 // Check if a cost item has zero quantity
