@@ -306,7 +306,6 @@ export const parseExcelFile = async (
   missingHeaders?: string[];
   valid: boolean;
 }> => {
-  try {
     const buffer = await file.arrayBuffer();
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(buffer);
@@ -343,9 +342,9 @@ export const parseExcelFile = async (
           // Convert ExcelJS CellValue to string or number
           const cellValue = cell.value;
           if (cellValue !== null && cellValue !== undefined) {
-            if (typeof cellValue === 'object' && 'text' in cellValue) {
-              // Handle rich text objects
-              rowData[header] = cellValue.text;
+            if (typeof cellValue === 'object' && 'richText' in cellValue && Array.isArray(cellValue.richText)) {
+              // Handle rich text objects by concatenating text fragments
+              rowData[header] = cellValue.richText.map((fragment: any) => fragment.text || '').join('');
             } else if (typeof cellValue === 'string' || typeof cellValue === 'number') {
               rowData[header] = cellValue;
             } else {
@@ -374,9 +373,6 @@ export const parseExcelFile = async (
       missingHeaders: missingHeaders.length > 0 ? missingHeaders : undefined,
       valid,
     };
-  } catch (error) {
-    throw error;
-  }
 };
 
 export const fileSize = (size: number): string => {
