@@ -49,5 +49,3 @@ export interface MongoElement {
   created_at: string;
   updated_at: string;
 }
-
-// Add other shared types here in the future

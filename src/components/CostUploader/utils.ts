@@ -1,5 +1,5 @@
 import { CostItem, ExcelRow, REQUIRED_HEADERS } from "./types";
-import * as XLSX from "xlsx";
+import * as ExcelJS from "exceljs";
 
 // Helper to extract numbers and return null if zero
 export const extractNumber = (
@@ -306,56 +306,73 @@ export const parseExcelFile = async (
   missingHeaders?: string[];
   valid: boolean;
 }> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
+    const buffer = await file.arrayBuffer();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+    
+    const worksheet = workbook.getWorksheet(1);
+    if (!worksheet) {
+      throw new Error("No worksheet found");
+    }
 
-    reader.onload = (e) => {
-      try {
-        const data = e.target?.result;
-        const workbook = XLSX.read(data, { type: "binary" });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
+    // Get headers from first row
+    const headerRow = worksheet.getRow(1);
+    const headers: string[] = [];
+    headerRow.eachCell((cell, colNumber) => {
+      headers[colNumber - 1] = String(cell.value || "");
+    });
 
-        const headerRow = XLSX.utils.sheet_to_json(worksheet, {
-          header: 1,
-        })[0] as string[];
+    // Normalize the headers to lowercase for case-insensitive comparison
+    const normalizedHeaders = headers.map((h) => h.toLowerCase().trim());
 
-        // Normalize the headers to lowercase for case-insensitive comparison
-        const normalizedHeaders = headerRow.map((h) => h.toLowerCase().trim());
+    // Check if all required headers exist (case-insensitive)
+    const missingHeaders = REQUIRED_HEADERS.filter(
+      (header) => !normalizedHeaders.includes(header.toLowerCase())
+    );
 
-        // Check if all required headers exist (case-insensitive)
-        const missingHeaders = REQUIRED_HEADERS.filter(
-          (header) => !normalizedHeaders.includes(header.toLowerCase())
-        );
-
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, {
-          defval: "", // Include empty cells with empty string
-        }) as ExcelRow[];
-
-        // Make sure valid is always boolean
-        const valid =
-          jsonData.length > 0 && missingHeaders.length === 0 ? true : false;
-
-        const processedData = processExcelData(jsonData, headerRow);
-
-        resolve({
-          data: processedData,
-          headers: headerRow,
-          missingHeaders:
-            missingHeaders.length > 0 ? missingHeaders : undefined,
-          valid,
-        });
-      } catch (error) {
-        reject(error);
+    // Convert worksheet to JSON data
+    const jsonData: ExcelRow[] = [];
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return; // Skip header row
+      
+      const rowData: ExcelRow = {};
+      row.eachCell((cell, colNumber) => {
+        const header = headers[colNumber - 1];
+        if (header) {
+          // Convert ExcelJS CellValue to string or number
+          const cellValue = cell.value;
+          if (cellValue !== null && cellValue !== undefined) {
+            if (typeof cellValue === 'object' && 'richText' in cellValue && Array.isArray(cellValue.richText)) {
+              // Handle rich text objects by concatenating text fragments
+              rowData[header] = cellValue.richText.map((fragment: any) => fragment.text || '').join('');
+            } else if (typeof cellValue === 'string' || typeof cellValue === 'number') {
+              rowData[header] = cellValue;
+            } else {
+              rowData[header] = String(cellValue);
+            }
+          } else {
+            rowData[header] = "";
+          }
+        }
+      });
+      
+      // Only add non-empty rows
+      if (Object.values(rowData).some(value => value !== null && value !== undefined && value !== "")) {
+        jsonData.push(rowData);
       }
-    };
+    });
 
-    reader.onerror = () => {
-      reject(new Error("Error reading file"));
-    };
+    // Make sure valid is always boolean
+    const valid = jsonData.length > 0 && missingHeaders.length === 0;
 
-    reader.readAsBinaryString(file);
-  });
+    const processedData = processExcelData(jsonData, headers);
+
+    return {
+      data: processedData,
+      headers: headers,
+      missingHeaders: missingHeaders.length > 0 ? missingHeaders : undefined,
+      valid,
+    };
 };
 
 export const fileSize = (size: number): string => {
