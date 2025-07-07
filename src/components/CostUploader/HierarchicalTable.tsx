@@ -2,7 +2,7 @@ import { Alert, TableContainer, Paper, Table, TableBody } from "@mui/material";
 import { CostItem, MetaFile } from "./types";
 import { columnWidths } from "./styles";
 import { formatNumber } from "./utils";
-import TableHeader, { SortConfig, SortableColumn, SortDirection } from "./TableHeader";
+import TableHeader, { SortConfig, SortableColumn } from "./TableHeader";
 import CostTableRow from "./CostTableRow";
 import {
   createTableContainerStyle,
