@@ -32,9 +32,14 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import GroupWorkIcon from "@mui/icons-material/GroupWork";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+
 import { MongoElement } from "../types/common.types";
 import { useEbkpGroups } from "../hooks/useEbkpGroups";
+import { useExcelDialog } from "../hooks/useExcelDialog";
 import MainCostEbkpGroupRow from "./CostUploader/MainCostEbkpGroupRow";
+import ExcelImportDialog from "./ExcelImportDialog";
+import SmartExcelButton from "./SmartExcelButton";
+import { ExcelService } from "../utils/excelService";
 
 export interface EbkpStat {
   code: string;
@@ -98,6 +103,21 @@ const EbkpCostForm: React.FC<Props> = ({
   
   // Use hierarchical groups hook for EBKP grouping
   const { ebkpGroups, hierarchicalGroups } = useEbkpGroups(stats, kennwerte);
+  
+  // Excel dialog hook
+  const { 
+    isOpen: excelDialogOpen, 
+    isExporting,
+    isImporting,
+    exportConfig, 
+    activity,
+    openDialog: openExcelDialog, 
+    closeDialog: closeExcelDialog, 
+    setIsExporting,
+    setIsImporting,
+    recordExport,
+    recordImport
+  } = useExcelDialog();
 
   // Expand/collapse functionality
   const toggleMainGroup = (mainGroup: string) => {
@@ -428,10 +448,36 @@ const EbkpCostForm: React.FC<Props> = ({
     return group.availableQuantities.find(q => q.type === selectedType) || group.availableQuantities[0];
   };
 
+  const handleExcelImport = (importedKennwerte: Record<string, number>) => {
+    Object.entries(importedKennwerte).forEach(([code, value]) => {
+      onKennwertChange(code, value);
+    });
+    recordImport();
+    setIsImporting(false);
+  };
+
+  const handleExcelExport = async (): Promise<void> => {
+    try {
+      setIsExporting(true);
+      await ExcelService.exportToExcel(stats, kennwerte, exportConfig);
+      recordExport();
+    } catch (error) {
+      console.error('Export failed:', error);
+      throw error;
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleSmartExcelImport = () => {
+    setIsImporting(true);
+    openExcelDialog();
+  };
+
   return (
     <Box sx={{ mt: 2 }}>
       {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', mb: 2 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6" color="primary">
           Kennwerte nach {
             groupingStrategy === 'ebkp' ? 'eBKP' :
@@ -442,6 +488,18 @@ const EbkpCostForm: React.FC<Props> = ({
             groupingStrategy === 'structural' ? 'Tragwerk' : 'Gruppe'
           }
         </Typography>
+        
+        {/* Smart Excel Export/Import Button */}
+        <SmartExcelButton
+          onExport={handleExcelExport}
+          onImport={handleSmartExcelImport}
+          isExporting={isExporting}
+          isImporting={isImporting}
+          lastExportTime={activity.lastExportTime}
+          lastImportTime={activity.lastImportTime}
+          exportCount={activity.exportCount}
+          importCount={activity.importCount}
+        />
       </Box>
 
       {/* Search and Filter Toolbar */}
@@ -958,6 +1016,15 @@ const EbkpCostForm: React.FC<Props> = ({
           )}
         </Box>
       )}
+      
+      {/* Excel Import Dialog */}
+      <ExcelImportDialog
+        open={excelDialogOpen}
+        onClose={closeExcelDialog}
+        onImportComplete={handleExcelImport}
+        stats={stats}
+        currentKennwerte={kennwerte}
+      />
     </Box>
   );
 };
