@@ -25,13 +25,23 @@ export interface MongoElement {
   };
   available_quantities?: AvailableQuantity[]; // All available quantity options
   quantity_value?: number;
-  // Direct quantity properties
+  
+  // Direct quantity properties - latest BIM-derived quantities
+  /** Latest BIM-derived area in square meters */
   area?: number;
+  /** Latest BIM-derived volume in cubic meters */
   volume?: number;
+  /** Latest BIM-derived length in meters */
   length?: number;
+  
+  // Original imported values before BIM mapping or overrides
+  /** Raw imported area value before any BIM mapping or overrides */
   original_area?: number;
+  /** Raw imported volume value before any BIM mapping or overrides */
   original_volume?: number;
+  /** Raw imported length value before any BIM mapping or overrides */
   original_length?: number;
+  
   is_structural?: boolean;
   is_external?: boolean;
   classification?: {
@@ -45,14 +55,21 @@ export interface MongoElement {
     volume?: number;
     fraction?: number;
   }>;
+  
+  /**
+   * @deprecated Legacy properties object - may contain stale data.
+   * Use direct quantity fields (area, volume, length) instead.
+   */
   properties: {
     category?: string;
     level?: string;
+    /** @deprecated Use direct area field instead */
     area?: number;
     is_structural?: boolean;
     is_external?: boolean;
     ebkph?: string;
   };
+  
   created_at: string;
   updated_at: string;
 }

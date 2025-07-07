@@ -16,13 +16,12 @@ export const getZeroQuantityStyles = (
   return {
     ...baseStyles,
     backgroundColor: 'rgba(255, 152, 0, 0.06)', // More subtle orange background
-    borderLeft: '4px solid rgba(255, 152, 0, 0.6)', // Clean left border
     position: 'relative',
     '&::after': {
       content: '""',
       position: 'absolute',
       top: 0,
-      left: 4, // Start after the left border
+      left: 0, // Start from the left edge
       right: 0,
       bottom: 0,
       background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(255, 152, 0, 0.03) 8px, rgba(255, 152, 0, 0.03) 16px)',
@@ -31,7 +30,6 @@ export const getZeroQuantityStyles = (
     },
     '&:hover': {
       backgroundColor: 'rgba(255, 152, 0, 0.10)',
-      borderLeftColor: 'rgba(255, 152, 0, 0.8)',
     },
     '& > *': {
       position: 'relative',

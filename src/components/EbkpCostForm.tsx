@@ -38,6 +38,7 @@ import { useExcelDialog } from "../hooks/useExcelDialog";
 import { MongoElement } from "../types/common.types";
 import { ExcelService } from "../utils/excelService";
 import { getZeroQuantityStyles, isZeroQuantity } from "../utils/zeroQuantityHighlight";
+import { hasElementMissingQuantity } from '../utils/quantityUtils';
 import MainCostEbkpGroupRow from "./CostUploader/MainCostEbkpGroupRow";
 import ExcelImportDialog from "./ExcelImportDialog";
 import SmartExcelButton from "./SmartExcelButton";
@@ -187,26 +188,7 @@ const EbkpCostForm: React.FC<Props> = ({
     const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
     
     return group.elements.some(element => {
-      let quantityValue: number | undefined;
-      
-      switch (selectedQuantityType) {
-        case 'area':
-          quantityValue = element.area;
-          break;
-        case 'volume':
-          quantityValue = element.volume;
-          break;
-        case 'length':
-          quantityValue = element.length;
-          break;
-        case 'count':
-          quantityValue = 1; // For count, if element exists, it's counted as 1
-          break;
-        default:
-          quantityValue = element.area; // Default to area
-      }
-      
-      return isZeroQuantity(quantityValue);
+      return hasElementMissingQuantity(element, selectedQuantityType);
     });
   };
 
@@ -874,24 +856,7 @@ const EbkpCostForm: React.FC<Props> = ({
                             {(() => {
                               const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
                               const elementsWithMissingQuantities = group.elements.filter(element => {
-                                let quantityValue: number | undefined;
-                                switch (selectedQuantityType) {
-                                  case 'area':
-                                    quantityValue = element.area;
-                                    break;
-                                  case 'volume':
-                                    quantityValue = element.volume;
-                                    break;
-                                  case 'length':
-                                    quantityValue = element.length;
-                                    break;
-                                  case 'count':
-                                    quantityValue = 1;
-                                    break;
-                                  default:
-                                    quantityValue = element.area;
-                                }
-                                return isZeroQuantity(quantityValue);
+                                return hasElementMissingQuantity(element, selectedQuantityType);
                               }).length;
                               return `${elementsWithMissingQuantities} ohne Mengen`;
                             })()}

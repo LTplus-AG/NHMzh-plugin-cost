@@ -4,6 +4,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -13,6 +14,7 @@ import {
   MenuItem,
   Select,
   SelectChangeEvent,
+  Snackbar,
   Table,
   TableBody,
   TableCell,
@@ -21,7 +23,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { MongoElement } from "../../types/common.types";
 import { CostEbkpGroup } from "../../types/cost.types";
 import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
@@ -36,6 +38,22 @@ interface CostEbkpGroupRowProps {
   isSubGroup?: boolean;
 }
 
+// Helper function to get element quantity value (extracted outside component)
+const getElementQuantityValue = (element: MongoElement, selectedQuantityType: string) => {
+  switch (selectedQuantityType) {
+    case 'area':
+      return element.area;
+    case 'volume':
+      return element.volume;
+    case 'length':
+      return element.length;
+    case 'count':
+      return 1;
+    default:
+      return element.area;
+  }
+};
+
 const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   group,
   isExpanded,
@@ -47,14 +65,26 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
 }) => {
   const [showAllElements, setShowAllElements] = useState(false);
   const [showOnlyFailing, setShowOnlyFailing] = useState(false);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastSeverity, setToastSeverity] = useState<'success' | 'error'>('success');
 
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      // You could add a toast notification here if needed
+      setToastMessage('GUID erfolgreich kopiert!');
+      setToastSeverity('success');
+      setShowToast(true);
     } catch (err) {
       console.error('Failed to copy text: ', err);
+      setToastMessage('Fehler beim Kopieren der GUID');
+      setToastSeverity('error');
+      setShowToast(true);
     }
+  };
+
+  const handleToastClose = () => {
+    setShowToast(false);
   };
 
   const formatCurrency = (value: number) => {
@@ -104,33 +134,15 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
   const elementsWithZeroQuantity = group.elements.filter(element => {
     // Elements store quantities directly as properties, not in available_quantities array
-    let quantityValue: number | undefined;
-    
-    switch (selectedQuantityType) {
-      case 'area':
-        quantityValue = element.area;
-        break;
-      case 'volume':
-        quantityValue = element.volume;
-        break;
-      case 'length':
-        quantityValue = element.length;
-        break;
-      case 'count':
-        quantityValue = 1; // For count, if element exists, it's counted as 1
-        break;
-      default:
-        quantityValue = element.area; // Default to area
-    }
-    
+    const quantityValue = getElementQuantityValue(element, selectedQuantityType);
     return isZeroQuantity(quantityValue);
   });
   
   const hasZeroQuantity = elementsWithZeroQuantity.length > 0;
   const elementsWithMissingQuantities = elementsWithZeroQuantity.length;
   
-  // Debug logging - let's see what the actual element structure looks like
-  if (group.code === 'C01.03') {
+  // Debug logging - only in development
+  if (process.env.NODE_ENV === 'development' && group.code === 'C01.03') {
     console.log(`[CostEbkpGroupRow] DETAILED DEBUG for Group ${group.code}:`, {
       selectedQuantity,
       selectedQuantityType,
@@ -151,20 +163,54 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
         volume: group.elements[0].volume,
         length: group.elements[0].length,
         selectedQuantityType,
-        selectedQuantityValue: selectedQuantityType === 'area' ? group.elements[0].area : 
-                              selectedQuantityType === 'volume' ? group.elements[0].volume :
-                              selectedQuantityType === 'length' ? group.elements[0].length : 
-                              selectedQuantityType === 'count' ? 1 : group.elements[0].area,
-        isZeroResult: isZeroQuantity(selectedQuantityType === 'area' ? group.elements[0].area : 
-                                    selectedQuantityType === 'volume' ? group.elements[0].volume :
-                                    selectedQuantityType === 'length' ? group.elements[0].length : 
-                                    selectedQuantityType === 'count' ? 1 : group.elements[0].area)
+        selectedQuantityValue: getElementQuantityValue(group.elements[0], selectedQuantityType),
+        isZeroResult: isZeroQuantity(getElementQuantityValue(group.elements[0], selectedQuantityType))
       } : null
     });
   }
 
+  // Memoize filtered and sorted elements for performance
+  const processedElements = useMemo(() => {
+    // Filter elements if showing only failing ones
+    let filteredElements = showOnlyFailing 
+      ? group.elements.filter(element => isZeroQuantity(getElementQuantityValue(element, selectedQuantityType)))
+      : [...group.elements];
+
+    // Sort elements to show those with missing quantities first
+    const sortedElements = filteredElements.sort((a, b) => {
+      const aHasMissingQuantity = isZeroQuantity(getElementQuantityValue(a, selectedQuantityType));
+      const bHasMissingQuantity = isZeroQuantity(getElementQuantityValue(b, selectedQuantityType));
+      
+      // Elements with missing quantities come first
+      if (aHasMissingQuantity && !bHasMissingQuantity) return -1;
+      if (!aHasMissingQuantity && bHasMissingQuantity) return 1;
+      
+      // If both have same status, maintain original order
+      return 0;
+    });
+    
+    // Show either first 5 or all elements based on showAllElements state
+    return (showAllElements || showOnlyFailing) ? sortedElements : sortedElements.slice(0, 5);
+  }, [group.elements, selectedQuantityType, showOnlyFailing, showAllElements]);
+
   return (
     <>
+      {/* Toast Notification */}
+      <Snackbar
+        open={showToast}
+        autoHideDuration={3000}
+        onClose={handleToastClose}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={handleToastClose}
+          severity={toastSeverity}
+          sx={{ width: '100%' }}
+        >
+          {toastMessage}
+        </Alert>
+      </Snackbar>
+
       {/* Main Group Row */}
       <Tooltip 
         title={hasZeroQuantity ? `Enthält ${elementsWithMissingQuantities} Element${elementsWithMissingQuantities !== 1 ? 'e' : ''} ohne Mengen - Gruppe ${group.code}` : ''}
@@ -308,64 +354,9 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
               <Box sx={{ py: 1, pl: 4 }}>
                 <Table size="small">
                   <TableBody>
-                    {(() => {
-                      // Helper function to get element quantity value
-                      const getElementQuantityValue = (element: MongoElement) => {
-                        switch (selectedQuantityType) {
-                          case 'area':
-                            return element.area;
-                          case 'volume':
-                            return element.volume;
-                          case 'length':
-                            return element.length;
-                          case 'count':
-                            return 1;
-                          default:
-                            return element.area;
-                        }
-                      };
-
-                      // Filter elements if showing only failing ones
-                      let filteredElements = showOnlyFailing 
-                        ? group.elements.filter(element => isZeroQuantity(getElementQuantityValue(element)))
-                        : [...group.elements];
-
-                      // Sort elements to show those with missing quantities first
-                      const sortedElements = filteredElements.sort((a, b) => {
-                        const aHasMissingQuantity = isZeroQuantity(getElementQuantityValue(a));
-                        const bHasMissingQuantity = isZeroQuantity(getElementQuantityValue(b));
-                        
-                        // Elements with missing quantities come first
-                        if (aHasMissingQuantity && !bHasMissingQuantity) return -1;
-                        if (!aHasMissingQuantity && bHasMissingQuantity) return 1;
-                        
-                        // If both have same status, maintain original order
-                        return 0;
-                      });
-                      
-                      // Show either first 5 or all elements based on showAllElements state
-                      return (showAllElements || showOnlyFailing) ? sortedElements : sortedElements.slice(0, 5);
-                    })().map((element: MongoElement) => {
+                    {processedElements.map((element: MongoElement) => {
                       // For individual elements, check if they have zero quantity for the selected type
-                      let quantityValue: number | undefined;
-                      
-                      switch (selectedQuantityType) {
-                        case 'area':
-                          quantityValue = element.area;
-                          break;
-                        case 'volume':
-                          quantityValue = element.volume;
-                          break;
-                        case 'length':
-                          quantityValue = element.length;
-                          break;
-                        case 'count':
-                          quantityValue = 1; // For count, if element exists, it's counted as 1
-                          break;
-                        default:
-                          quantityValue = element.area; // Default to area
-                      }
-                      
+                      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
                       const elementHasZeroQuantity = isZeroQuantity(quantityValue);
                       
                       return (
@@ -445,7 +436,15 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                     <Tooltip title={`GUID kopieren: ${element.global_id}`} arrow>
                                       <IconButton
                                         size="small"
-                                        onClick={() => copyToClipboard(element.global_id!)}
+                                        onClick={() => {
+                                          if (element.global_id) {
+                                            copyToClipboard(element.global_id);
+                                          } else {
+                                            setToastMessage('Keine GUID verfügbar');
+                                            setToastSeverity('error');
+                                            setShowToast(true);
+                                          }
+                                        }}
                                         sx={{ 
                                           p: 0.25, 
                                           fontSize: '0.7rem',
@@ -568,23 +567,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                 // Count remaining elements with missing quantities
                                 const remainingElements = group.elements.slice(5);
                                 const remainingWithMissingQuantities = remainingElements.filter(element => {
-                                  let quantityValue: number | undefined;
-                                  switch (selectedQuantityType) {
-                                    case 'area':
-                                      quantityValue = element.area;
-                                      break;
-                                    case 'volume':
-                                      quantityValue = element.volume;
-                                      break;
-                                    case 'length':
-                                      quantityValue = element.length;
-                                      break;
-                                    case 'count':
-                                      quantityValue = 1;
-                                      break;
-                                    default:
-                                      quantityValue = element.area;
-                                  }
+                                  const quantityValue = getElementQuantityValue(element, selectedQuantityType);
                                   return isZeroQuantity(quantityValue);
                                 }).length;
                                 

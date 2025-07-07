@@ -13,6 +13,7 @@ import {
 import React from "react";
 import { HierarchicalCostEbkpGroup } from "../../types/cost.types";
 import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
+import { getElementQuantityValue } from "../../utils/quantityUtils";
 import CostEbkpGroupRow from "./CostEbkpGroupRow";
 
 interface MainCostEbkpGroupRowProps {
@@ -56,25 +57,7 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
   const hasZeroQuantity = group.subGroups.some(subGroup => {
     const selectedQuantityType = subGroup.selectedQuantityType || subGroup.availableQuantities[0]?.type;
     return subGroup.elements.some(element => {
-      let quantityValue: number | undefined;
-      
-      switch (selectedQuantityType) {
-        case 'area':
-          quantityValue = element.area;
-          break;
-        case 'volume':
-          quantityValue = element.volume;
-          break;
-        case 'length':
-          quantityValue = element.length;
-          break;
-        case 'count':
-          quantityValue = 1; // For count, if element exists, it's counted as 1
-          break;
-        default:
-          quantityValue = element.area; // Default to area
-      }
-      
+      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
       return isZeroQuantity(quantityValue);
     });
   });
@@ -84,25 +67,7 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
     const selectedQuantityType = subGroup.selectedQuantityType || subGroup.availableQuantities[0]?.type;
     // Count elements in this subgroup that have zero quantities for the selected type
     const elementsWithZeroQuantity = subGroup.elements.filter(element => {
-      let quantityValue: number | undefined;
-      
-      switch (selectedQuantityType) {
-        case 'area':
-          quantityValue = element.area;
-          break;
-        case 'volume':
-          quantityValue = element.volume;
-          break;
-        case 'length':
-          quantityValue = element.length;
-          break;
-        case 'count':
-          quantityValue = 1; // For count, if element exists, it's counted as 1
-          break;
-        default:
-          quantityValue = element.area; // Default to area
-      }
-      
+      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
       return isZeroQuantity(quantityValue);
     });
     return total + elementsWithZeroQuantity.length;
