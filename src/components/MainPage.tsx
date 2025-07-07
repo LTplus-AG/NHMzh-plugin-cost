@@ -23,6 +23,10 @@ import { MetaFile } from "./CostUploader/types";
 import ProjectMetadataDisplay, {
   CostProjectMetadata,
 } from "./ui/ProjectMetadataDisplay";
+import SmartExcelButton from "./SmartExcelButton";
+import { useExcelDialog } from "../hooks/useExcelDialog";
+import { ExcelService } from "../utils/excelService";
+import ExcelImportDialog from "./ExcelImportDialog";
 
 const getAvailableQuantities = (el: MongoElement) => {
   const quantities = [];
@@ -138,6 +142,19 @@ const MainPage = () => {
   
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [metaFileForPreview, setMetaFileForPreview] = useState<MetaFile | null>(null);
+
+  // Excel dialog state
+  const {
+    isOpen: excelDialogOpen,
+    openDialog: openExcelDialog,
+    closeDialog: closeExcelDialog,
+    isImporting,
+    isExporting,
+    setIsExporting,
+    activity,
+    recordExport,
+    recordImport,
+  } = useExcelDialog();
 
   // Load project-specific data when project changes
   useEffect(() => {
@@ -658,6 +675,30 @@ const MainPage = () => {
     0
   );
 
+  // Excel handlers
+  const handleExcelExport = async (): Promise<void> => {
+    setIsExporting(true);
+    try {
+      await ExcelService.exportToExcel(ebkpStats, kennwerte, {
+        fileName: `kostenkennwerte-${selectedProject}-${new Date().toISOString().split('T')[0]}`
+      });
+      recordExport();
+    } catch (error) {
+      console.error('Excel export failed:', error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleSmartExcelImport = () => {
+    openExcelDialog();
+  };
+
+  const handleExcelImportComplete = (importedKennwerte: Record<string, number>) => {
+    setKennwerte(prev => ({ ...prev, ...importedKennwerte }));
+    recordImport();
+  };
+
 
 
   return (
@@ -791,24 +832,39 @@ const MainPage = () => {
                 />
               )}
               
-              {selectedProject && totalCost > 0 && (
-                <Button
-                  variant="contained"
-                  color="primary"
-                  startIcon={<SendIcon />}
-                  onClick={handlePreviewCosts}
-                  sx={{
-                    fontWeight: 500,
-                    textTransform: "none",
-                    backgroundColor: "#0D0599",
-                    "&:hover": {
-                      backgroundColor: "#0A0477",
-                    },
-                  }}
-                >
-                  Kosten übermitteln
-                </Button>
-              )}
+              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                {selectedProject && ebkpStats.length > 0 && (
+                  <SmartExcelButton
+                    onExport={handleExcelExport}
+                    onImport={handleSmartExcelImport}
+                    isExporting={isExporting}
+                    isImporting={isImporting}
+                    lastExportTime={activity.lastExportTime}
+                    lastImportTime={activity.lastImportTime}
+                    exportCount={activity.exportCount}
+                    importCount={activity.importCount}
+                  />
+                )}
+                
+                {selectedProject && totalCost > 0 && (
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<SendIcon />}
+                    onClick={handlePreviewCosts}
+                    sx={{
+                      fontWeight: 500,
+                      textTransform: "none",
+                      backgroundColor: "#0D0599",
+                      "&:hover": {
+                        backgroundColor: "#0A0477",
+                      },
+                    }}
+                  >
+                    Kosten übermitteln
+                  </Button>
+                )}
+              </Box>
             </Box>
 
             <EbkpCostForm
@@ -833,6 +889,15 @@ const MainPage = () => {
         onConfirm={handleConfirmCosts}
         metaFile={metaFileForPreview}
         calculatedTotalCost={totalCost}
+      />
+
+      {/* Excel Import Dialog */}
+      <ExcelImportDialog
+        open={excelDialogOpen}
+        onClose={closeExcelDialog}
+        onImportComplete={handleExcelImportComplete}
+        stats={ebkpStats}
+        currentKennwerte={kennwerte}
       />
     </Box>
   );

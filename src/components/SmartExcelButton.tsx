@@ -177,7 +177,8 @@ const SmartExcelButton: React.FC<Props> = ({
                 minWidth: 120,
                 textTransform: 'none',
                 fontWeight: 500,
-                borderColor: 'divider',
+                borderColor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.23)' : 'divider',
+                color: 'text.primary',
                 '&:hover': {
                   borderColor: 'primary.main',
                   backgroundColor: 'action.hover'
@@ -226,9 +227,13 @@ const SmartExcelButton: React.FC<Props> = ({
             sx: {
               mt: 1,
               minWidth: 320,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+              boxShadow: (theme) => theme.palette.mode === 'dark' 
+                ? '0 8px 32px rgba(0,0,0,0.8)' 
+                : '0 8px 32px rgba(0,0,0,0.12)',
               border: '1px solid',
-              borderColor: 'divider'
+              borderColor: (theme) => theme.palette.mode === 'dark' 
+                ? 'rgba(255, 255, 255, 0.23)' 
+                : 'divider'
             }
           }}
         >
@@ -263,7 +268,17 @@ const SmartExcelButton: React.FC<Props> = ({
 
           {(lastExportTime || lastImportTime) && (
             <>
-              <Box sx={{ px: 2, py: 1.5, backgroundColor: 'grey.50', borderTop: '1px solid', borderColor: 'divider' }}>
+              <Box sx={{ 
+                px: 2, 
+                py: 1.5, 
+                backgroundColor: (theme) => theme.palette.mode === 'dark' 
+                  ? 'rgba(255, 255, 255, 0.08)' 
+                  : 'grey.50',
+                borderTop: '1px solid', 
+                borderColor: (theme) => theme.palette.mode === 'dark' 
+                  ? 'rgba(255, 255, 255, 0.23)' 
+                  : 'divider' 
+              }}>
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mb: 1, display: 'block' }}>
                   Letzte Aktivität
                 </Typography>
