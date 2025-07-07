@@ -25,6 +25,13 @@ export interface MongoElement {
   };
   available_quantities?: AvailableQuantity[]; // All available quantity options
   quantity_value?: number;
+  // Direct quantity properties
+  area?: number;
+  volume?: number;
+  length?: number;
+  original_area?: number;
+  original_volume?: number;
+  original_length?: number;
   is_structural?: boolean;
   is_external?: boolean;
   classification?: {

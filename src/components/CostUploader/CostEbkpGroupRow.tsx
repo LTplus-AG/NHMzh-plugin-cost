@@ -1,24 +1,30 @@
-import React from "react";
-import {
-  TableRow,
-  TableCell,
-  Typography,
-  TextField,
-  Select,
-  MenuItem,
-  FormControl,
-  Box,
-  Chip,
-  IconButton,
-  Collapse,
-  Table,
-  TableBody,
-  SelectChangeEvent,
-} from "@mui/material";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
-import { CostEbkpGroup } from "../../types/cost.types";
+import {
+  Box,
+  Button,
+  Chip,
+  Collapse,
+  FormControl,
+  IconButton,
+  MenuItem,
+  Select,
+  SelectChangeEvent,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import React, { useState } from "react";
 import { MongoElement } from "../../types/common.types";
+import { CostEbkpGroup } from "../../types/cost.types";
+import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
 
 interface CostEbkpGroupRowProps {
   group: CostEbkpGroup;
@@ -39,6 +45,18 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   onQuantityTypeChange,
   isSubGroup = false,
 }) => {
+  const [showAllElements, setShowAllElements] = useState(false);
+  const [showOnlyFailing, setShowOnlyFailing] = useState(false);
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      // You could add a toast notification here if needed
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('de-CH', {
       style: 'currency',
@@ -82,16 +100,84 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   const kennwert = kennwerte[group.code] || 0;
   const totalCost = selectedQuantity.value * kennwert;
 
+  // Check if any child elements have zero quantities for the selected quantity type
+  const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
+  const elementsWithZeroQuantity = group.elements.filter(element => {
+    // Elements store quantities directly as properties, not in available_quantities array
+    let quantityValue: number | undefined;
+    
+    switch (selectedQuantityType) {
+      case 'area':
+        quantityValue = element.area;
+        break;
+      case 'volume':
+        quantityValue = element.volume;
+        break;
+      case 'length':
+        quantityValue = element.length;
+        break;
+      case 'count':
+        quantityValue = 1; // For count, if element exists, it's counted as 1
+        break;
+      default:
+        quantityValue = element.area; // Default to area
+    }
+    
+    return isZeroQuantity(quantityValue);
+  });
+  
+  const hasZeroQuantity = elementsWithZeroQuantity.length > 0;
+  const elementsWithMissingQuantities = elementsWithZeroQuantity.length;
+  
+  // Debug logging - let's see what the actual element structure looks like
+  if (group.code === 'C01.03') {
+    console.log(`[CostEbkpGroupRow] DETAILED DEBUG for Group ${group.code}:`, {
+      selectedQuantity,
+      selectedQuantityType,
+      hasZeroQuantity,
+      elementsWithZeroQuantity: elementsWithZeroQuantity.length,
+      totalElements: group.elements.length,
+      availableQuantities: group.availableQuantities,
+      groupSelectedQuantityType: group.selectedQuantityType,
+      firstElement: group.elements[0] ? {
+        _id: group.elements[0]._id,
+        available_quantities: group.elements[0].available_quantities,
+        quantity: group.elements[0].quantity,
+        properties: group.elements[0].properties,
+        allKeys: Object.keys(group.elements[0])
+      } : null,
+      firstElementQuantityCheck: group.elements[0] ? {
+        area: group.elements[0].area,
+        volume: group.elements[0].volume,
+        length: group.elements[0].length,
+        selectedQuantityType,
+        selectedQuantityValue: selectedQuantityType === 'area' ? group.elements[0].area : 
+                              selectedQuantityType === 'volume' ? group.elements[0].volume :
+                              selectedQuantityType === 'length' ? group.elements[0].length : 
+                              selectedQuantityType === 'count' ? 1 : group.elements[0].area,
+        isZeroResult: isZeroQuantity(selectedQuantityType === 'area' ? group.elements[0].area : 
+                                    selectedQuantityType === 'volume' ? group.elements[0].volume :
+                                    selectedQuantityType === 'length' ? group.elements[0].length : 
+                                    selectedQuantityType === 'count' ? 1 : group.elements[0].area)
+      } : null
+    });
+  }
+
   return (
     <>
       {/* Main Group Row */}
+      <Tooltip 
+        title={hasZeroQuantity ? `Enthält ${elementsWithMissingQuantities} Element${elementsWithMissingQuantities !== 1 ? 'e' : ''} ohne Mengen - Gruppe ${group.code}` : ''}
+        arrow
+        placement="left"
+      >
       <TableRow 
-        sx={{ 
+          sx={getZeroQuantityStyles(hasZeroQuantity, { 
           backgroundColor: isSubGroup ? "rgba(0, 0, 0, 0.02)" : "inherit",
           "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.04)" },
-        }}
+          })}
       >
-        <TableCell sx={{ py: 1.5, pl: isSubGroup ? 3 : 1 }}>
+          <TableCell sx={{ py: 1.5, pl: hasZeroQuantity ? (isSubGroup ? 2.5 : 0.5) : (isSubGroup ? 3 : 1) }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             {group.elements.length > 0 && (
               <IconButton
@@ -114,16 +200,52 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
               sx={{ fontWeight: 'bold' }}
             />
             {group.elements.length > 0 && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
               <Typography variant="caption" color="text.secondary">
                 {group.elements.length} Element{group.elements.length !== 1 ? 'e' : ''}
               </Typography>
+                  {elementsWithMissingQuantities > 0 && (
+                    <Typography variant="caption" sx={{ 
+                      color: 'warning.main', 
+                      fontWeight: 'bold',
+                      fontSize: '0.65rem'
+                    }}>
+                      {elementsWithMissingQuantities} ohne Mengen
+                    </Typography>
+                  )}
+                  {isExpanded && elementsWithMissingQuantities > 0 && (
+                    <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5 }}>
+                      <Button
+                        size="small"
+                        variant={showOnlyFailing ? "contained" : "outlined"}
+                        onClick={() => {
+                          setShowOnlyFailing(!showOnlyFailing);
+                          if (!showOnlyFailing) {
+                            setShowAllElements(true); // Show all when filtering to failing
+                          }
+                        }}
+                        sx={{ 
+                          fontSize: '0.6rem',
+                          py: 0.25,
+                          px: 0.75,
+                          minWidth: 'auto'
+                        }}
+                      >
+                        {showOnlyFailing ? 'Alle' : 'Nur fehlende'}
+                      </Button>
+                    </Box>
+                  )}
+                </Box>
             )}
           </Box>
         </TableCell>
         
         <TableCell sx={{ py: 1.5, textAlign: "right" }}>
           <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 0.5 }}>
-            <Typography variant="body2" fontWeight="medium">
+              <Typography variant="body2" sx={{ 
+                fontWeight: hasZeroQuantity ? 'bold' : 'medium',
+                color: hasZeroQuantity ? 'warning.main' : 'inherit'
+              }}>
               {formatQuantity(selectedQuantity.value)} {selectedQuantity.unit}
             </Typography>
             
@@ -169,6 +291,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
           </Typography>
         </TableCell>
       </TableRow>
+      </Tooltip>
 
       {/* Collapsible Elements */}
       {group.elements.length > 0 && (
@@ -185,28 +308,335 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
               <Box sx={{ py: 1, pl: 4 }}>
                 <Table size="small">
                   <TableBody>
-                    {group.elements.slice(0, 5).map((element: MongoElement) => (
-                      <TableRow key={element._id}>
+                    {(() => {
+                      // Helper function to get element quantity value
+                      const getElementQuantityValue = (element: MongoElement) => {
+                        switch (selectedQuantityType) {
+                          case 'area':
+                            return element.area;
+                          case 'volume':
+                            return element.volume;
+                          case 'length':
+                            return element.length;
+                          case 'count':
+                            return 1;
+                          default:
+                            return element.area;
+                        }
+                      };
+
+                      // Filter elements if showing only failing ones
+                      let filteredElements = showOnlyFailing 
+                        ? group.elements.filter(element => isZeroQuantity(getElementQuantityValue(element)))
+                        : [...group.elements];
+
+                      // Sort elements to show those with missing quantities first
+                      const sortedElements = filteredElements.sort((a, b) => {
+                        const aHasMissingQuantity = isZeroQuantity(getElementQuantityValue(a));
+                        const bHasMissingQuantity = isZeroQuantity(getElementQuantityValue(b));
+                        
+                        // Elements with missing quantities come first
+                        if (aHasMissingQuantity && !bHasMissingQuantity) return -1;
+                        if (!aHasMissingQuantity && bHasMissingQuantity) return 1;
+                        
+                        // If both have same status, maintain original order
+                        return 0;
+                      });
+                      
+                      // Show either first 5 or all elements based on showAllElements state
+                      return (showAllElements || showOnlyFailing) ? sortedElements : sortedElements.slice(0, 5);
+                    })().map((element: MongoElement) => {
+                      // For individual elements, check if they have zero quantity for the selected type
+                      let quantityValue: number | undefined;
+                      
+                      switch (selectedQuantityType) {
+                        case 'area':
+                          quantityValue = element.area;
+                          break;
+                        case 'volume':
+                          quantityValue = element.volume;
+                          break;
+                        case 'length':
+                          quantityValue = element.length;
+                          break;
+                        case 'count':
+                          quantityValue = 1; // For count, if element exists, it's counted as 1
+                          break;
+                        default:
+                          quantityValue = element.area; // Default to area
+                      }
+                      
+                      const elementHasZeroQuantity = isZeroQuantity(quantityValue);
+                      
+                      return (
+                        <Tooltip 
+                          key={element._id}
+                          title={
+                            <Box sx={{ p: 0.5 }}>
+                              <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block' }}>
+                                {element.type_name || element.ifc_class || 'Unknown'}
+                              </Typography>
+                              {element.name && (
+                                <Typography variant="caption" sx={{ display: 'block', fontStyle: 'italic' }}>
+                                  "{element.name}"
+                                </Typography>
+                              )}
+                              {element.global_id && (
+                                <Typography variant="caption" sx={{ display: 'block', fontSize: '0.65rem' }}>
+                                  GUID: {element.global_id}
+                                </Typography>
+                              )}
+                              {elementHasZeroQuantity && (
+                                <Typography variant="caption" sx={{ display: 'block', color: 'warning.light', fontWeight: 'bold' }}>
+                                  ⚠ Keine {selectedQuantityType === 'area' ? 'Fläche' : 
+                                           selectedQuantityType === 'length' ? 'Länge' : 
+                                           selectedQuantityType === 'volume' ? 'Volumen' : 'Menge'} vorhanden
+                                </Typography>
+                              )}
+                              <Typography variant="caption" sx={{ display: 'block', fontSize: '0.65rem', mt: 0.5 }}>
+                                Ebene: {element.level || 'Unbekannt'}
+                              </Typography>
+                              {element.materials && element.materials.length > 0 && (
+                                <Typography variant="caption" sx={{ display: 'block', fontSize: '0.65rem' }}>
+                                  Materialien: {element.materials.map(m => m.name).join(', ')}
+                                </Typography>
+                              )}
+                            </Box>
+                          }
+                          arrow
+                          placement="left"
+                        >
+                          <TableRow sx={getZeroQuantityStyles(elementHasZeroQuantity, { border: "none" })}>
+                            <TableCell sx={{ py: 1, border: "none", pl: elementHasZeroQuantity ? 3.5 : 4 }}>
+                              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                {/* Main element info */}
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Typography variant="caption" sx={{ 
+                                    color: elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
+                                    fontWeight: elementHasZeroQuantity ? 'bold' : 'medium',
+                                    fontSize: '0.8rem'
+                                  }}>
+                                    {element.type_name || element.ifc_class || 'Unknown'}
+                                  </Typography>
+                                  
+                                  {/* Status badges */}
+                                  <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                    {element.is_structural && (
+                                      <Chip 
+                                        label="Tragwerk" 
+                                        size="small" 
+                                        color="primary" 
+                                        variant="outlined"
+                                        sx={{ fontSize: '0.6rem', height: 16 }}
+                                      />
+                                    )}
+                                    {element.is_external && (
+                                      <Chip 
+                                        label="Extern" 
+                                        size="small" 
+                                        color="secondary" 
+                                        variant="outlined"
+                                        sx={{ fontSize: '0.6rem', height: 16 }}
+                                      />
+                                    )}
+                                  </Box>
+
+                                  {element.global_id && (
+                                    <Tooltip title={`GUID kopieren: ${element.global_id}`} arrow>
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => copyToClipboard(element.global_id!)}
+                                        sx={{ 
+                                          p: 0.25, 
+                                          fontSize: '0.7rem',
+                                          color: 'text.secondary',
+                                          '&:hover': {
+                                            color: 'primary.main',
+                                            backgroundColor: 'rgba(25, 118, 210, 0.04)'
+                                          }
+                                        }}
+                                      >
+                                        <ContentCopyIcon sx={{ fontSize: '0.7rem' }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                </Box>
+
+                                {/* Element name if different from type */}
+                                {element.name && element.name !== element.type_name && (
+                                  <Typography variant="caption" sx={{ 
+                                    color: 'text.secondary',
+                                    fontSize: '0.7rem',
+                                    fontStyle: 'italic'
+                                  }}>
+                                    "{element.name}"
+                                  </Typography>
+                                )}
+
+                                {/* Quantities info */}
+                                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                  {element.area !== undefined && (
+                                    <Typography variant="caption" sx={{ 
+                                      color: selectedQuantityType === 'area' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
+                                      fontSize: '0.65rem',
+                                      fontWeight: selectedQuantityType === 'area' ? 'bold' : 'normal'
+                                    }}>
+                                      A: {element.area?.toFixed(2) || '0'} m²
+                                    </Typography>
+                                  )}
+                                  {element.length !== undefined && (
+                                    <Typography variant="caption" sx={{ 
+                                      color: selectedQuantityType === 'length' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
+                                      fontSize: '0.65rem',
+                                      fontWeight: selectedQuantityType === 'length' ? 'bold' : 'normal'
+                                    }}>
+                                      L: {element.length?.toFixed(2) || '0'} m
+                                    </Typography>
+                                  )}
+                                  {element.volume !== undefined && (
+                                    <Typography variant="caption" sx={{ 
+                                      color: selectedQuantityType === 'volume' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
+                                      fontSize: '0.65rem',
+                                      fontWeight: selectedQuantityType === 'volume' ? 'bold' : 'normal'
+                                    }}>
+                                      V: {element.volume?.toFixed(3) || '0'} m³
+                                    </Typography>
+                                  )}
+                                </Box>
+
+                                {/* Materials info */}
+                                {element.materials && element.materials.length > 0 && (
+                                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                                    {element.materials.slice(0, 2).map((material, idx) => (
+                                      <Chip 
+                                        key={idx}
+                                        label={material.name} 
+                                        size="small" 
+                                        variant="outlined"
+                                        sx={{ 
+                                          fontSize: '0.6rem', 
+                                          height: 16,
+                                          color: 'text.secondary',
+                                          borderColor: 'rgba(0,0,0,0.12)'
+                                        }}
+                                      />
+                                    ))}
+                                    {element.materials.length > 2 && (
+                                      <Typography variant="caption" sx={{ 
+                                        color: 'text.secondary',
+                                        fontSize: '0.6rem',
+                                        alignSelf: 'center'
+                                      }}>
+                                        +{element.materials.length - 2} weitere
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                )}
+                              </Box>
+                            </TableCell>
+                            <TableCell sx={{ py: 1, border: "none", textAlign: "right", verticalAlign: 'top' }}>
+                              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                                  {element.level || 'Unbekannte Ebene'}
+                                </Typography>
+                                {element.classification && (
+                                  <Typography variant="caption" sx={{ 
+                                    color: 'text.secondary',
+                                    fontSize: '0.65rem',
+                                    textAlign: 'right'
+                                  }}>
+                                    {element.classification.system}: {element.classification.id}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </TableCell>
+                            <TableCell sx={{ py: 1, border: "none" }} />
+                            <TableCell sx={{ py: 1, border: "none" }} />
+                          </TableRow>
+                        </Tooltip>
+                      );
+                    })}
+                    {group.elements.length > 5 && !showAllElements && !showOnlyFailing && (
+                      <TableRow>
                         <TableCell sx={{ py: 0.5, border: "none" }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
                           <Typography variant="caption" color="text.secondary">
-                            {element.type_name || element.ifc_class || 'Unknown'}
+                                ... und {group.elements.length - 5} weitere
                           </Typography>
-                        </TableCell>
-                        <TableCell sx={{ py: 0.5, border: "none", textAlign: "right" }}>
-                          <Typography variant="caption" color="text.secondary">
-                            {element.level || 'Unknown Level'}
+                              {(() => {
+                                // Count remaining elements with missing quantities
+                                const remainingElements = group.elements.slice(5);
+                                const remainingWithMissingQuantities = remainingElements.filter(element => {
+                                  let quantityValue: number | undefined;
+                                  switch (selectedQuantityType) {
+                                    case 'area':
+                                      quantityValue = element.area;
+                                      break;
+                                    case 'volume':
+                                      quantityValue = element.volume;
+                                      break;
+                                    case 'length':
+                                      quantityValue = element.length;
+                                      break;
+                                    case 'count':
+                                      quantityValue = 1;
+                                      break;
+                                    default:
+                                      quantityValue = element.area;
+                                  }
+                                  return isZeroQuantity(quantityValue);
+                                }).length;
+                                
+                                return remainingWithMissingQuantities > 0 ? (
+                                  <Typography variant="caption" sx={{ 
+                                    color: 'warning.main', 
+                                    fontWeight: 'bold',
+                                    fontSize: '0.6rem'
+                                  }}>
+                                    {remainingWithMissingQuantities} weitere ohne Mengen
                           </Typography>
+                                ) : null;
+                              })()}
+                            </Box>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => setShowAllElements(true)}
+                              startIcon={<ExpandMoreIcon />}
+                              sx={{ 
+                                fontSize: '0.65rem',
+                                py: 0.25,
+                                px: 1,
+                                minWidth: 'auto'
+                              }}
+                            >
+                              Alle anzeigen
+                            </Button>
+                          </Box>
                         </TableCell>
+                        <TableCell sx={{ py: 0.5, border: "none" }} />
                         <TableCell sx={{ py: 0.5, border: "none" }} />
                         <TableCell sx={{ py: 0.5, border: "none" }} />
                       </TableRow>
-                    ))}
-                    {group.elements.length > 5 && (
+                    )}
+                    {group.elements.length > 5 && showAllElements && !showOnlyFailing && (
                       <TableRow>
                         <TableCell sx={{ py: 0.5, border: "none" }}>
-                          <Typography variant="caption" color="text.secondary">
-                            ... und {group.elements.length - 5} weitere
-                          </Typography>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => setShowAllElements(false)}
+                            startIcon={<ExpandLessIcon />}
+                            sx={{ 
+                              fontSize: '0.65rem',
+                              py: 0.25,
+                              px: 1,
+                              minWidth: 'auto'
+                            }}
+                          >
+                            Weniger anzeigen
+                          </Button>
                         </TableCell>
                         <TableCell sx={{ py: 0.5, border: "none" }} />
                         <TableCell sx={{ py: 0.5, border: "none" }} />

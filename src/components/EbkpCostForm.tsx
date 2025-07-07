@@ -1,20 +1,25 @@
-import React, { useState, useMemo } from "react";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import ClearIcon from "@mui/icons-material/Clear";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import FilterListIcon from "@mui/icons-material/FilterList";
+import GroupWorkIcon from "@mui/icons-material/GroupWork";
+import SearchIcon from "@mui/icons-material/Search";
+import SortIcon from "@mui/icons-material/Sort";
 import {
-  TextField,
   Box,
-  Typography,
-  Select,
-  MenuItem,
-  FormControl,
-  Chip,
-  Paper,
-  InputAdornment,
   Button,
+  Chip,
   Collapse,
   Divider,
+  FormControl,
   IconButton,
+  InputAdornment,
   InputLabel,
+  MenuItem,
   OutlinedInput,
+  Paper,
+  Select,
   SelectChangeEvent,
   Table,
   TableBody,
@@ -22,24 +27,20 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Tooltip,
+  Typography,
 } from "@mui/material";
-import SearchIcon from "@mui/icons-material/Search";
-import FilterListIcon from "@mui/icons-material/FilterList";
-import SortIcon from "@mui/icons-material/Sort";
-import ClearIcon from "@mui/icons-material/Clear";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
-import GroupWorkIcon from "@mui/icons-material/GroupWork";
-import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import React, { useMemo, useState } from "react";
 
-import { MongoElement } from "../types/common.types";
 import { useEbkpGroups } from "../hooks/useEbkpGroups";
 import { useExcelDialog } from "../hooks/useExcelDialog";
+import { MongoElement } from "../types/common.types";
+import { ExcelService } from "../utils/excelService";
+import { getZeroQuantityStyles, isZeroQuantity } from "../utils/zeroQuantityHighlight";
 import MainCostEbkpGroupRow from "./CostUploader/MainCostEbkpGroupRow";
 import ExcelImportDialog from "./ExcelImportDialog";
 import SmartExcelButton from "./SmartExcelButton";
-import { ExcelService } from "../utils/excelService";
 
 export interface EbkpStat {
   code: string;
@@ -179,6 +180,34 @@ const EbkpCostForm: React.FC<Props> = ({
         setExpandedEbkp(allCodes);
       }
     }
+  };
+
+  // Helper function to check if a group has missing quantities
+  const hasGroupMissingQuantities = (group: GroupedData): boolean => {
+    const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
+    
+    return group.elements.some(element => {
+      let quantityValue: number | undefined;
+      
+      switch (selectedQuantityType) {
+        case 'area':
+          quantityValue = element.area;
+          break;
+        case 'volume':
+          quantityValue = element.volume;
+          break;
+        case 'length':
+          quantityValue = element.length;
+          break;
+        case 'count':
+          quantityValue = 1; // For count, if element exists, it's counted as 1
+          break;
+        default:
+          quantityValue = element.area; // Default to area
+      }
+      
+      return isZeroQuantity(quantityValue);
+    });
   };
 
   const groupedData = useMemo((): GroupedData[] => {
@@ -377,8 +406,16 @@ const EbkpCostForm: React.FC<Props> = ({
       return true;
     });
 
-    // Sort
+    // Sort - prioritize groups with missing quantities at the top
     filtered.sort((a, b) => {
+      // First priority: groups with missing quantities should come first
+      const aMissingQuantities = hasGroupMissingQuantities(a);
+      const bMissingQuantities = hasGroupMissingQuantities(b);
+      
+      if (aMissingQuantities && !bMissingQuantities) return -1; // a comes first
+      if (!aMissingQuantities && bMissingQuantities) return 1;  // b comes first
+      
+      // If both have same missing quantity status, sort by the selected field
       let aValue: string | number, bValue: string | number;
       
       switch (sortField) {
@@ -424,7 +461,7 @@ const EbkpCostForm: React.FC<Props> = ({
     });
 
     return filtered;
-  }, [groupedData, searchTerm, sortField, sortDirection, quantityTypeFilter, hasKennwertFilter, kennwerte]);
+  }, [groupedData, searchTerm, sortField, sortDirection, quantityTypeFilter, hasKennwertFilter, kennwerte, hasGroupMissingQuantities]);
 
   const handleQuantityTypeFilterChange = (event: SelectChangeEvent<string[]>) => {
     const value = event.target.value;
@@ -663,15 +700,29 @@ const EbkpCostForm: React.FC<Props> = ({
           {searchTerm && ` (gefiltert nach "${searchTerm}")`}
         </Typography>
         {filteredAndSortedData.length > 0 && (
-          <Typography variant="body2" color="text.secondary">
-            Sortiert nach {
-              sortField === 'group' ? 'Gruppe' :
-              sortField === 'quantity' ? 'Menge' :
-              sortField === 'cost' ? 'Gesamtkosten' :
-              sortField === 'kennwert' ? 'Kennwert' :
-              sortField === 'element_count' ? 'Anzahl' : sortField
-            } {sortDirection === 'asc' ? '↑' : '↓'}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Sortiert nach {
+                sortField === 'group' ? 'Gruppe' :
+                sortField === 'quantity' ? 'Menge' :
+                sortField === 'cost' ? 'Gesamtkosten' :
+                sortField === 'kennwert' ? 'Kennwert' :
+                sortField === 'element_count' ? 'Anzahl' : sortField
+              } {sortDirection === 'asc' ? '↑' : '↓'}
+            </Typography>
+            {(() => {
+              const groupsWithMissingQuantities = filteredAndSortedData.filter(group => hasGroupMissingQuantities(group)).length;
+              return groupsWithMissingQuantities > 0 ? (
+                <Chip 
+                  label={`${groupsWithMissingQuantities} mit fehlenden Mengen`}
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  sx={{ fontSize: '0.7rem' }}
+                />
+              ) : null;
+            })()}
+          </Box>
         )}
       </Box>
 
@@ -770,24 +821,30 @@ const EbkpCostForm: React.FC<Props> = ({
           ) : (
           filteredAndSortedData.map((group) => {
             const selectedQuantity = getSelectedQuantity(group);
+            const hasZeroQuantity = hasGroupMissingQuantities(group);
             
             return (
-              <Paper 
-                key={group.groupKey} 
-                elevation={2}
-                sx={{ 
-                  p: 3,
-                  transition: 'all 0.3s ease-in-out',
-                  '&:hover': { 
-                    elevation: 4,
-                    transform: 'translateY(-2px)',
-                    boxShadow: '0 8px 25px rgba(0,0,0,0.15)'
-                  },
-                  background: 'linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%)',
-                  border: '1px solid',
-                  borderColor: 'divider'
-                }}
+              <Tooltip 
+                key={group.groupKey}
+                title={hasZeroQuantity ? `Enthält Elemente ohne ${selectedQuantity.label || selectedQuantity.type} - Gruppe ${group.displayName}` : ''}
+                arrow
+                placement="left"
               >
+                <Paper 
+                  elevation={2}
+                  sx={getZeroQuantityStyles(hasZeroQuantity, { 
+                    p: 3,
+                    transition: 'all 0.3s ease-in-out',
+                    '&:hover': { 
+                      elevation: 4,
+                      transform: 'translateY(-2px)',
+                      boxShadow: '0 8px 25px rgba(0,0,0,0.15)'
+                    },
+                    background: 'linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%)',
+                    border: '1px solid',
+                    borderColor: 'divider'
+                  })}
+                >
                 <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
                   {/* Group Code Badge */}
                   <Box sx={{ minWidth: 80 }}>
@@ -803,9 +860,44 @@ const EbkpCostForm: React.FC<Props> = ({
                       }}
                     />
                     {group.elements.length > 0 && (
-                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                        {group.elements.length} Element{group.elements.length !== 1 ? 'e' : ''}
-                      </Typography>
+                      <Box sx={{ mt: 0.5 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                          {group.elements.length} Element{group.elements.length !== 1 ? 'e' : ''}
+                        </Typography>
+                        {hasZeroQuantity && (
+                          <Typography variant="caption" sx={{ 
+                            color: 'warning.main', 
+                            fontWeight: 'bold',
+                            fontSize: '0.65rem',
+                            display: 'block'
+                          }}>
+                            {(() => {
+                              const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
+                              const elementsWithMissingQuantities = group.elements.filter(element => {
+                                let quantityValue: number | undefined;
+                                switch (selectedQuantityType) {
+                                  case 'area':
+                                    quantityValue = element.area;
+                                    break;
+                                  case 'volume':
+                                    quantityValue = element.volume;
+                                    break;
+                                  case 'length':
+                                    quantityValue = element.length;
+                                    break;
+                                  case 'count':
+                                    quantityValue = 1;
+                                    break;
+                                  default:
+                                    quantityValue = element.area;
+                                }
+                                return isZeroQuantity(quantityValue);
+                              }).length;
+                              return `${elementsWithMissingQuantities} ohne Mengen`;
+                            })()}
+                          </Typography>
+                        )}
+                      </Box>
                     )}
                   </Box>
 
@@ -859,9 +951,13 @@ const EbkpCostForm: React.FC<Props> = ({
                                 <Chip 
                                   label={`${selected.value.toLocaleString("de-CH")} ${selected.unit}`}
                                   size="small"
-                                  color="primary"
+                                  color={hasZeroQuantity ? "warning" : "primary"}
                                   variant="filled"
-                                  sx={{ fontWeight: 'bold', fontSize: '0.75rem' }}
+                                  sx={{ 
+                                    fontWeight: 'bold', 
+                                    fontSize: '0.75rem',
+                                    color: hasZeroQuantity ? 'warning.contrastText' : 'primary.contrastText'
+                                  }}
                                 />
                               </Box>
                             );
@@ -928,9 +1024,12 @@ const EbkpCostForm: React.FC<Props> = ({
                         <Chip 
                           label={`${group.availableQuantities[0].value.toLocaleString("de-CH")} ${group.availableQuantities[0].unit}`}
                           size="small"
-                          color="primary"
+                          color={hasZeroQuantity ? "warning" : "primary"}
                           variant="filled"
-                          sx={{ fontWeight: 'bold' }}
+                          sx={{ 
+                            fontWeight: 'bold',
+                            color: hasZeroQuantity ? 'warning.contrastText' : 'primary.contrastText'
+                          }}
                         />
                       </Box>
                     ) : (
@@ -1011,6 +1110,7 @@ const EbkpCostForm: React.FC<Props> = ({
                   </Box>
                 </Box>
               </Paper>
+            </Tooltip>
             );
           })
           )}
