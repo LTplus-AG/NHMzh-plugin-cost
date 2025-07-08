@@ -156,56 +156,70 @@ const MainPage = () => {
     recordImport,
   } = useExcelDialog();
 
-  // Load project-specific data when project changes
+  // Load Kennwerte from backend when project changes
   useEffect(() => {
-    if (!selectedProject) {
-      setKennwerte({});
-      setQuantitySelections({});
-      return;
-    }
-
-    try {
-      // Load Kennwerte for this project
-      const kennwerteKey = `cost-plugin-kennwerte-${selectedProject}`;
-      const savedKennwerte = localStorage.getItem(kennwerteKey);
-      if (savedKennwerte) {
-        const parsedKennwerte = JSON.parse(savedKennwerte);
-        setKennwerte(parsedKennwerte);
-
-      } else {
-        setKennwerte({});
-      }
-
-      // Load quantity selections for this project
-      const selectionsKey = `cost-plugin-quantity-selections-${selectedProject}`;
-      const savedSelections = localStorage.getItem(selectionsKey);
-      if (savedSelections) {
-        const parsedSelections = JSON.parse(savedSelections);
-        setQuantitySelections(parsedSelections);
-
-      } else {
-        setQuantitySelections({});
-      }
-    } catch (error) {
-      console.warn('Failed to load saved data for project:', error);
-      setKennwerte({});
-      setQuantitySelections({});
+    if (selectedProject) {
+      loadKennwerteFromBackend(selectedProject);
     }
   }, [selectedProject]);
 
-  // Save Kennwerte to localStorage whenever they change (project-specific)
-  useEffect(() => {
-    if (!selectedProject) return;
-    
+  // Function to load kennwerte from backend database
+  const loadKennwerteFromBackend = async (projectName: string) => {
     try {
-      const key = `cost-plugin-kennwerte-${selectedProject}`;
-      localStorage.setItem(key, JSON.stringify(kennwerte));
-      setLastSaved(new Date().toLocaleTimeString('de-CH'));
-
+      const backendUrl = import.meta.env.VITE_COST_BACKEND_URL || 'http://localhost:8001';
+      const response = await fetch(`${backendUrl}/get-kennwerte/${projectName}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.kennwerte) {
+          setKennwerte(data.kennwerte);
+          console.log(`Loaded kennwerte from backend for project ${projectName}`);
+        }
+      } else {
+        console.warn(`No kennwerte found in backend for project ${projectName}`);
+        setKennwerte({}); // Reset to empty if no data found
+      }
     } catch (error) {
-      console.warn('Failed to save Kennwerte to localStorage:', error);
+      console.error("Error loading kennwerte from backend:", error);
+    }
+  };
+
+  // Save Kennwerte to backend whenever they change
+  useEffect(() => {
+    if (selectedProject && Object.keys(kennwerte).length > 0) {
+      const timeoutId = setTimeout(() => {
+        saveKennwerteToBackend(selectedProject, kennwerte);
+      }, 500); // Debounce saves by 500ms
+
+      return () => clearTimeout(timeoutId);
     }
   }, [kennwerte, selectedProject]);
+
+  // Function to save kennwerte to backend database
+  const saveKennwerteToBackend = async (projectName: string, kennwerteData: Record<string, number>) => {
+    try {
+      const backendUrl = import.meta.env.VITE_COST_BACKEND_URL || 'http://localhost:8001';
+      const response = await fetch(`${backendUrl}/save-kennwerte`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectName,
+          kennwerte: kennwerteData,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log(`Saved kennwerte to backend for project ${projectName}`);
+        setLastSaved(new Date().toLocaleTimeString('de-CH'));
+      } else {
+        console.error("Failed to save kennwerte to backend");
+      }
+    } catch (error) {
+      console.error("Error saving kennwerte to backend:", error);
+    }
+  };
 
   // Save quantity selections to localStorage whenever they change (project-specific)
   useEffect(() => {
