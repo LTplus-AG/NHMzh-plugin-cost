@@ -35,7 +35,7 @@ import React, { useMemo, useState } from "react";
 
 import { useEbkpGroups } from "../hooks/useEbkpGroups";
 import { MongoElement } from "../types/common.types";
-import { getZeroQuantityStyles, isZeroQuantity } from "../utils/zeroQuantityHighlight";
+import { getZeroQuantityStyles } from "../utils/zeroQuantityHighlight";
 import { hasElementMissingQuantity } from '../utils/quantityUtils';
 import MainCostEbkpGroupRow from "./CostUploader/MainCostEbkpGroupRow";
 
