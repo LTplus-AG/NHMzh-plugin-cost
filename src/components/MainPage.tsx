@@ -14,7 +14,7 @@ import {
   Stepper,
   Typography
 } from "@mui/material";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { useKafka } from "../contexts/KafkaContext";
 import { MongoElement } from "../types/common.types";
 import PreviewModal, { EnhancedCostItem } from "./CostUploader/PreviewModal";
@@ -137,8 +137,21 @@ const MainPage = () => {
 
   const [ebkpStats, setEbkpStats] = useState<EbkpStat[]>([]);
   const [kennwerte, setKennwerte] = useState<Record<string, number>>({});
-  const [quantitySelections, setQuantitySelections] = useState<Record<string, string>>({});
+  const [quantitySelections, setQuantitySelections] = useState<Record<string, string>>(() => {
+    // Initialize quantity selections from localStorage only if a project is already selected
+    if (!selectedProject) return {};
+    try {
+      const savedSelections = localStorage.getItem(`cost-plugin-quantity-selections-${selectedProject}`);
+      return savedSelections ? JSON.parse(savedSelections) : {};
+    } catch (error) {
+      console.warn('Failed to load saved quantity selections:', error);
+      return {};
+    }
+  });
   const [lastSaved, setLastSaved] = useState<string | null>(null);
+  
+  // Add a ref to track if we're loading kennwerte
+  const isLoadingKennwerteRef = useRef(false);
   
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [metaFileForPreview, setMetaFileForPreview] = useState<MetaFile | null>(null);
@@ -159,7 +172,16 @@ const MainPage = () => {
   // Load Kennwerte from backend when project changes
   useEffect(() => {
     if (selectedProject) {
-      loadKennwerteFromBackend(selectedProject);
+      isLoadingKennwerteRef.current = true;
+      loadKennwerteFromBackend(selectedProject).finally(() => {
+        // Set loading to false after a small delay to ensure the state has been updated
+        setTimeout(() => {
+          isLoadingKennwerteRef.current = false;
+        }, 100);
+      });
+    } else {
+      // No project selected, clear kennwerte
+      setKennwerte({});
     }
   }, [selectedProject]);
 
@@ -170,28 +192,38 @@ const MainPage = () => {
       const response = await fetch(`${backendUrl}/get-kennwerte/${projectName}`);
       if (response.ok) {
         const data = await response.json();
-        if (data.kennwerte) {
+        if (data.kennwerte && typeof data.kennwerte === 'object') {
           setKennwerte(data.kennwerte);
-          console.log(`Loaded kennwerte from backend for project ${projectName}`);
+          console.log(`Loaded ${Object.keys(data.kennwerte).length} kennwerte from backend for project ${projectName}`);
+        } else {
+          // Don't reset to empty object, keep existing state
+          console.log(`No kennwerte found in backend response for project ${projectName}`);
         }
+      } else if (response.status === 404) {
+        // Project not found or no kennwerte saved yet - this is normal for new projects
+        console.log(`No saved kennwerte found for project ${projectName} (this is normal for new projects)`);
+        // Don't reset kennwerte here - let the user start fresh
       } else {
-        console.warn(`No kennwerte found in backend for project ${projectName}`);
-        setKennwerte({}); // Reset to empty if no data found
+        console.warn(`Failed to load kennwerte for project ${projectName}: ${response.status} ${response.statusText}`);
       }
     } catch (error) {
       console.error("Error loading kennwerte from backend:", error);
+      // Don't reset kennwerte on error - keep existing state
     }
   };
 
   // Save Kennwerte to backend whenever they change
   useEffect(() => {
-    if (selectedProject && Object.keys(kennwerte).length > 0) {
-      const timeoutId = setTimeout(() => {
-        saveKennwerteToBackend(selectedProject, kennwerte);
-      }, 500); // Debounce saves by 500ms
+    // Don't save on initial mount, when no project is selected, or while loading
+    if (!selectedProject || isLoadingKennwerteRef.current) return;
+    
+    // Save after a debounce delay, regardless of whether kennwerte is empty
+    // This ensures that clearing kennwerte also gets persisted
+    const timeoutId = setTimeout(() => {
+      saveKennwerteToBackend(selectedProject, kennwerte);
+    }, 1500); // Increased debounce to 1500ms to avoid too many saves
 
-      return () => clearTimeout(timeoutId);
-    }
+    return () => clearTimeout(timeoutId);
   }, [kennwerte, selectedProject]);
 
   // Function to save kennwerte to backend database
@@ -358,13 +390,6 @@ const MainPage = () => {
           }));
 
           setEbkpStats(stats);
-          setKennwerte((prev) => {
-            const updated: Record<string, number> = {};
-            stats.forEach((s) => {
-              if (prev[s.code] !== undefined) updated[s.code] = prev[s.code];
-            });
-            return updated;
-          });
           return elements;
         } else {
           setCurrentElements([]);
@@ -431,11 +456,11 @@ const MainPage = () => {
     if (!selectedProject) return;
     
     try {
-      const kennwerteKey = `cost-plugin-kennwerte-${selectedProject}`;
+      // Clear quantity selections from localStorage (still using localStorage for these)
       const selectionsKey = `cost-plugin-quantity-selections-${selectedProject}`;
-      
-      localStorage.removeItem(kennwerteKey);
       localStorage.removeItem(selectionsKey);
+      
+      // Clear kennwerte from state (will trigger save to backend with empty object)
       setKennwerte({});
       setQuantitySelections({});
       setLastSaved(null);
@@ -443,6 +468,8 @@ const MainPage = () => {
       if (currentElements.length > 0) {
         recalculateStats({});
       }
+      
+      console.log(`Cleared all saved data for project ${selectedProject}`);
     } catch (error) {
       console.warn('Failed to clear saved data:', error);
     }
@@ -884,9 +911,10 @@ const MainPage = () => {
             <EbkpCostForm
               stats={ebkpStats}
               kennwerte={kennwerte}
-              onKennwertChange={(code, value) =>
+              onKennwertChange={(code: string, value: number) => {
+                console.log(`Updating kennwert for ${code}: ${value}`);
                 setKennwerte((prev) => ({ ...prev, [code]: value }))
-              }
+              }}
               onQuantityTypeChange={handleQuantityTypeChange}
               totalCost={totalCost}
               elements={currentElements}

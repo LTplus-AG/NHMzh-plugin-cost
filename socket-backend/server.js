@@ -172,10 +172,33 @@ const consumer = kafka.consumer({ groupId: config.kafka.groupId });
 
 // Create HTTP server for both health check and WebSocket
 const server = http.createServer((req, res) => {
-  // Add CORS headers to all responses
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // CORS handling for all routes
+  res.setHeader("Access-Control-Allow-Origin", corsOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(200);
+    res.end();
+    return;
+  }
+
+  // Add payload size check for POST requests
+  if (req.method === "POST") {
+    const contentLength = parseInt(req.headers['content-length'] || '0');
+    const maxSize = 1048576; // 1MB limit
+    
+    if (contentLength > maxSize) {
+      res.writeHead(413, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        error: "Payload too large",
+        message: "Request body exceeds 1MB limit. Please reduce the amount of data or use batch processing.",
+        maxSize: "1MB"
+      }));
+      return;
+    }
+  }
 
   // --- CORS Handling --- START ---
   const requestOrigin = req.headers.origin;
@@ -230,15 +253,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Handle CORS preflight requests
-  if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.writeHead(200);
-    res.end();
-    return;
-  }
+  // Set CORS headers for all requests
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   // Simple health check endpoint
   if (req.url === "/health" || req.url === "/") {
@@ -258,12 +276,27 @@ const server = http.createServer((req, res) => {
       })
     );
   }
+  // Get available EBKP codes endpoint
+  else if (req.url === "/available-ebkp-codes" && req.method === "GET") {
+    try {
+      // Get unique EBKP codes from the loaded unit costs
+      const codes = Object.keys(unitCostsByEbkph);
+      
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ 
+        codes,
+        count: codes.length 
+      }));
+    } catch (error) {
+      console.error("Error getting available EBKP codes:", error);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ 
+        error: "Internal server error" 
+      }));
+    }
+  }
   // Get kennwerte endpoint
   else if (req.method === "GET" && req.url.startsWith("/get-kennwerte/")) {
-    // Enable CORS
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     
     // Extract project name from URL
     const projectName = decodeURIComponent(req.url.split("/get-kennwerte/")[1]);
@@ -297,10 +330,13 @@ const server = http.createServer((req, res) => {
         }
         
         // Get kennwerte for this project
+        console.log(`[get-kennwerte] Looking for project: ${projectName}, project_id: ${qtoProject._id}`);
         const costData = await costDb.collection("costData").find({
-          project_id: qtoProject._id.toString(),
+          project_id: qtoProject._id,  // Use ObjectId directly, not toString()
           unit_cost: { $gt: 0 }
         }).toArray();
+        
+        console.log(`[get-kennwerte] Found ${costData.length} cost data entries for project ${projectName}`);
         
         // Convert to kennwerte format
         const kennwerte = {};
@@ -329,10 +365,6 @@ const server = http.createServer((req, res) => {
   }
   // Save kennwerte endpoint
   else if (req.url === "/save-kennwerte" && req.method === "POST") {
-    // Enable CORS
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     
     let body = "";
     req.on("data", (chunk) => {
@@ -367,10 +399,13 @@ const server = http.createServer((req, res) => {
         const projectId = qtoProject._id;
         const timestamp = new Date();
         
+        console.log(`[save-kennwerte] Saving kennwerte for project: ${projectName}, project_id: ${projectId}`);
+        
         // Clear existing cost data for this project
-        await costDb.collection("costData").deleteMany({
+        const deleteResult = await costDb.collection("costData").deleteMany({
           project_id: projectId
         });
+        console.log(`[save-kennwerte] Deleted ${deleteResult.deletedCount} existing kennwerte for project ${projectName}`);
         
         // Insert new cost data
         const costDataDocs = Object.entries(kennwerte)
