@@ -401,27 +401,49 @@ const server = http.createServer((req, res) => {
         
         console.log(`[save-kennwerte] Saving kennwerte for project: ${projectName}, project_id: ${projectId}`);
         
-        // Clear existing cost data for this project
-        const deleteResult = await costDb.collection("costData").deleteMany({
-          project_id: projectId
-        });
-        console.log(`[save-kennwerte] Deleted ${deleteResult.deletedCount} existing kennwerte for project ${projectName}`);
-        
-        // Insert new cost data
-        const costDataDocs = Object.entries(kennwerte)
+        // Prepare bulk upsert operations instead of delete-then-insert
+        const bulkOps = Object.entries(kennwerte)
           .filter(([code, value]) => Number(value) > 0)
           .map(([ebkp_code, unit_cost]) => ({
-            project_id: projectId,
-            ebkp_code,
-            unit_cost: Number(unit_cost),
-            currency: "CHF",
-            created_at: timestamp,
-            updated_at: timestamp
+            updateOne: {
+              filter: { project_id: projectId, ebkp_code },
+              update: {
+                $set: {
+                  unit_cost: Number(unit_cost),
+                  currency: "CHF",
+                  updated_at: timestamp
+                },
+                $setOnInsert: {
+                  project_id: projectId,
+                  ebkp_code,
+                  created_at: timestamp
+                }
+              },
+              upsert: true
+            }
           }));
         
-        if (costDataDocs.length > 0) {
-          await costDb.collection("costData").insertMany(costDataDocs);
-          console.log(`Saved ${costDataDocs.length} kennwerte for project ${projectName}`);
+        let upsertedCount = 0;
+        let modifiedCount = 0;
+        
+        if (bulkOps.length > 0) {
+          // Execute bulk upsert operation
+          const bulkResult = await costDb.collection("costData").bulkWrite(bulkOps);
+          upsertedCount = bulkResult.upsertedCount;
+          modifiedCount = bulkResult.modifiedCount;
+          
+          console.log(`[save-kennwerte] Upserted ${upsertedCount} new and modified ${modifiedCount} existing kennwerte for project ${projectName}`);
+          
+          // Remove any kennwerte that are no longer in the input (optional cleanup)
+          const keepCodes = Object.keys(kennwerte).filter(code => Number(kennwerte[code]) > 0);
+          const deleteResult = await costDb.collection("costData").deleteMany({
+            project_id: projectId,
+            ebkp_code: { $nin: keepCodes }
+          });
+          
+          if (deleteResult.deletedCount > 0) {
+            console.log(`[save-kennwerte] Removed ${deleteResult.deletedCount} obsolete kennwerte for project ${projectName}`);
+          }
           
           // Reload unit costs into memory
           await loadUnitCostsFromDatabase();
@@ -430,7 +452,9 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ 
           status: "success",
-          savedCount: costDataDocs.length 
+          savedCount: bulkOps.length,
+          upsertedCount,
+          modifiedCount
         }));
         
       } catch (error) {

@@ -1,18 +1,14 @@
 import React, {
   createContext,
   useContext,
-  ReactNode,
-  useEffect,
   useState,
+  useEffect,
+  ReactNode,
   useCallback,
 } from "react";
+import { CostItem } from "../components/CostUploader/types";
 
 // Define types for cost items
-interface CostItem {
-  menge: number;
-  kennwert: number;
-}
-
 interface MongoElement {
   _id: string;
   project_id: string;
@@ -112,6 +108,7 @@ interface KafkaContextProps {
   ) => Promise<ProjectElement[]>;
   getCachedProjectData: (projectName: string) => ProjectData | null;
   backendUrl: string;
+  ebkpLoadError: string | null; // Add error state to interface
 }
 
 // Create the context with default values
@@ -133,6 +130,7 @@ const KafkaContext = createContext<KafkaContextProps>({
   getElementsForEbkp: async () => [],
   getCachedProjectData: () => null,
   backendUrl: "",
+  ebkpLoadError: null,
 });
 
 // Export the hook to use the context
@@ -200,6 +198,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
   const [projectDataCache, setProjectDataCache] = useState<
     Record<string, ProjectData>
   >({});
+  const [ebkpLoadError, setEbkpLoadError] = useState<string | null>(null); // Add error state
 
   // Get backend URL from environment or use default
   const backendUrl =
@@ -209,6 +208,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
   useEffect(() => {
     const loadEbkpCodes = async () => {
       try {
+        setEbkpLoadError(null); // Clear any previous errors
         const response = await fetch(`${backendUrl}/available-ebkp-codes`);
         if (response.ok) {
           const data = await response.json();
@@ -221,9 +221,14 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
             );
             setAvailableEbkpCodes(codeObjects);
           }
+        } else {
+          // Set error state if response is not ok
+          setEbkpLoadError(`Failed to load EBKP codes: ${response.status} ${response.statusText}`);
         }
       } catch (error) {
         console.error("Error loading EBKP codes:", error);
+        // Set error state when an error occurs
+        setEbkpLoadError(error instanceof Error ? error.message : "Failed to load EBKP codes");
       }
     };
 
@@ -559,6 +564,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         getElementsForEbkp,
         getCachedProjectData,
         backendUrl,
+        ebkpLoadError,
       }}
     >
       {children}
