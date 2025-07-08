@@ -172,18 +172,6 @@ const consumer = kafka.consumer({ groupId: config.kafka.groupId });
 
 // Create HTTP server for both health check and WebSocket
 const server = http.createServer((req, res) => {
-  // CORS handling for all routes
-  res.setHeader("Access-Control-Allow-Origin", corsOrigin);
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-
-  if (req.method === "OPTIONS") {
-    res.writeHead(200);
-    res.end();
-    return;
-  }
-
   // Add payload size check for POST requests
   if (req.method === "POST") {
     const contentLength = parseInt(req.headers['content-length'] || '0');
@@ -253,10 +241,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Set CORS headers for all requests
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  // Set fallback CORS headers for requests without origin
+  if (!requestOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  }
 
   // Simple health check endpoint
   if (req.url === "/health" || req.url === "/") {
@@ -2982,8 +2972,6 @@ server.listen(config.websocket.port, async () => {
 // Normalize EBKPH code (used for matching)
 function normalizeEbkpCode(code) {
   if (!code) return code;
-
-  console.log(`DEBUG: Normalizing code: "${code}"`);
 
   // Convert to uppercase for consistent matching
   const upperCode = code.toUpperCase().trim();
