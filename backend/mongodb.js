@@ -1,27 +1,11 @@
 const { MongoClient, ObjectId } = require("mongodb");
-const dotenv = require("dotenv");
+const logger = require('./logger');
+const config = require('./config');
 
-// Ensure environment variables are loaded
-dotenv.config();
-
-// Configuration - Replace with environment variables in production
-const MONGODB_HOST = process.env.MONGODB_HOST || "mongodb";
-const MONGODB_PORT = process.env.MONGODB_PORT || "27017";
-const MONGODB_COST_USER = process.env.MONGODB_COST_USER;
-const MONGODB_COST_PASSWORD = process.env.MONGODB_COST_PASSWORD;
-const MONGODB_DATABASE = process.env.MONGODB_DATABASE || "cost"; // Cost DB
-const MONGODB_QTO_DATABASE = process.env.MONGODB_QTO_DATABASE || "qto"; // QTO DB
-
-if (!MONGODB_COST_USER || !MONGODB_COST_PASSWORD) {
-  console.error(
-    "ERROR: MONGODB_COST_USER or MONGODB_COST_PASSWORD environment variables are not set. Cost service DB operations will fail."
-  );
-  // Decide if you want to throw an error or try to continue without auth (not recommended)
-  // throw new Error("Missing MongoDB credentials for cost service");
-}
-
-// Construct the connection URI using specific service credentials
-const mongoUri = `mongodb://${MONGODB_COST_USER}:${MONGODB_COST_PASSWORD}@${MONGODB_HOST}:${MONGODB_PORT}/${MONGODB_DATABASE}?authSource=admin`;
+// Use the MongoDB URI from config
+const mongoUri = config.mongodb.uri;
+const MONGODB_DATABASE = config.mongodb.costDatabase;
+const MONGODB_QTO_DATABASE = config.mongodb.qtoDatabase;
 
 let client = null;
 let costDb = null;
@@ -34,57 +18,37 @@ const RETRY_DELAY_MS = 3000; // Wait 3 seconds between retries
  * Connect to MongoDB and initialize database references
  */
 async function connectToMongoDB() {
-  if (client) {
-    // Already connected
-    return { client, costDb, qtoDb };
+  if (client && client.topology && client.topology.isConnected()) {
+    return;
   }
 
-  let retries = 0;
+  try {
+    client = new MongoClient(mongoUri, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
 
-  while (retries < MAX_RETRIES) {
-    let tempClient = null;
-    try {
-      tempClient = new MongoClient(mongoUri, {
-        serverSelectionTimeoutMS: 5000,
-        connectTimeoutMS: 10000,
-      });
-
-      await tempClient.connect();
-
-      // Assign to global variables upon successful connection
-      client = tempClient;
-      costDb = client.db(MONGODB_DATABASE);
-      qtoDb = client.db(MONGODB_QTO_DATABASE);
-
-      await initializeCollections();
-      return { client, costDb, qtoDb }; // Success: exit loop and return
-    } catch (error) {
-      console.error(
-        `MongoDB connection attempt ${retries + 1} failed:`,
-        error.message // Log only the error message for brevity
-      );
-      retries++;
-      if (tempClient) {
-        await tempClient.close(); // Ensure temporary client is closed on error
-      }
-
-      if (retries < MAX_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-      } else {
-        console.error("Max MongoDB connection retries reached.");
-        // Reset global client state if all retries fail
-        client = null;
-        costDb = null;
-        qtoDb = null;
-        // Rethrow the last error after max retries
-        throw new Error(
-          `Failed to connect to MongoDB after ${MAX_RETRIES} attempts: ${error.message}`
-        );
-      }
-    }
+    await client.connect();
+    
+    // Initialize database references
+    costDb = client.db(MONGODB_DATABASE);
+    qtoDb = client.db(MONGODB_QTO_DATABASE);
+    
+    logger.info(
+      `Connected to MongoDB at ${mongoUri.split("@")[1] || mongoUri}`
+    );
+  } catch (error) {
+    logger.error(
+      `Failed to connect to MongoDB at ${
+        mongoUri.split("@")[1] || mongoUri
+      }:`,
+      error
+    );
+    throw error;
   }
-  // Should not be reached if MAX_RETRIES > 0, but satisfies TS compiler
-  throw new Error("MongoDB connection failed unexpectedly after retry loop.");
 }
 
 /**
@@ -127,7 +91,7 @@ async function closeMongoDB() {
     try {
       await client.close();
     } catch (error) {
-      console.error("Error closing MongoDB connection:", error);
+      logger.error("Error closing MongoDB connection:", error);
     } finally {
       client = null;
       costDb = null;
@@ -147,7 +111,7 @@ async function ensureConnection() {
       // Test the connection
       await client.db("admin").command({ ping: 1 });
     } catch (error) {
-      console.error(
+      logger.error(
         "MongoDB connection check failed, attempting to reconnect:",
         error.message
       );
@@ -158,7 +122,7 @@ async function ensureConnection() {
         await connectToMongoDB();
       } catch (reconnectError) {
         // If reconnection (with retries) fails, throw a specific error
-        console.error(
+        logger.error(
           "Failed to reconnect to MongoDB after retries:",
           reconnectError
         );
@@ -169,6 +133,12 @@ async function ensureConnection() {
     }
   }
 
+  // Initialize database references if they're null
+  if (!costDb || !qtoDb) {
+    costDb = client.db(MONGODB_DATABASE);
+    qtoDb = client.db(MONGODB_QTO_DATABASE);
+  }
+  
   // Return the database references if connection is successful
   return {
     client,
@@ -307,7 +277,7 @@ async function saveCostData(elementData, costResult) {
       // Then insert the new costElement document
       await costDb.collection("costElements").insertOne(costElementDoc);
     } else {
-      console.log(
+      logger.warn(
         `QTO element with ID ${elementId} not found, skipping costElements update`
       );
     }
@@ -317,7 +287,7 @@ async function saveCostData(elementData, costResult) {
 
     return { elementId, projectId, result };
   } catch (error) {
-    console.error("Error saving cost data:", error);
+    logger.error("Error saving cost data:", error);
     throw error; // Throw the error to handle it in the calling function
   }
 }
@@ -333,7 +303,7 @@ async function getQtoElement(elementId) {
       _id: new ObjectId(elementId),
     });
   } catch (error) {
-    console.error("Error getting QTO element:", error);
+    logger.error("Error getting QTO element:", error);
     return null;
   }
 }
@@ -360,14 +330,14 @@ async function getElementsByProject(projectId) {
     });
 
     if (pendingCount > 0) {
-      console.log(
+      logger.info(
         `Skipped ${pendingCount} QTO elements with pending status for project ${projectId}`
       );
     }
 
     return allElements;
   } catch (error) {
-    console.error("Error getting elements by project:", error);
+    logger.error("Error getting elements by project:", error);
     return [];
   }
 }
@@ -383,7 +353,7 @@ async function getCostDataForElement(elementId) {
       element_id: new ObjectId(elementId),
     });
   } catch (error) {
-    console.error("Error getting cost data for element:", error);
+    logger.error("Error getting cost data for element:", error);
     return null;
   }
 }
@@ -401,7 +371,7 @@ async function updateProjectCostSummary(projectId) {
       projectObjId =
         typeof projectId === "string" ? new ObjectId(projectId) : projectId;
     } catch (error) {
-      console.error(`Invalid project ID format: ${projectId}`, error);
+      logger.error(`Invalid project ID format: ${projectId}`, error);
       return { error: `Invalid project ID format: ${projectId}` };
     }
 
@@ -472,7 +442,7 @@ async function updateProjectCostSummary(projectId) {
     };
 
     // Log the summary for debugging
-    console.log(`Project cost summary for ${projectId}:`, {
+    logger.info(`Project cost summary for ${projectId}:`, {
       elements_count: summary.elements_count,
       cost_data_count: summary.cost_data_count,
       total_from_elements: summary.total_from_elements,
@@ -489,7 +459,7 @@ async function updateProjectCostSummary(projectId) {
 
     return summary;
   } catch (error) {
-    console.error("Error updating project cost summary:", error);
+    logger.error("Error updating project cost summary:", error);
     return { error: `Failed to update project summary: ${error.message}` };
   }
 }
@@ -501,7 +471,7 @@ async function getAllElementsForProject(projectName) {
   await ensureConnection();
 
   try {
-    console.log(`Looking up project elements by name: ${projectName}`);
+    logger.info(`Looking up project elements by name: ${projectName}`);
     let elements = [];
 
     // First, check if qtoDb has a projects collection where we can find the project ID
@@ -535,7 +505,7 @@ async function getAllElementsForProject(projectName) {
             });
 
           if (pendingCount > 0) {
-            console.log(
+            logger.info(
               `Skipped ${pendingCount} QTO elements with pending status for project ${projectName}`
             );
           }
@@ -543,7 +513,7 @@ async function getAllElementsForProject(projectName) {
       } else {
       }
     } catch (error) {
-      console.warn(
+      logger.warn(
         `Error checking for projects collection in QTO database: ${error.message}`
       );
     }
@@ -582,7 +552,7 @@ async function getAllElementsForProject(projectName) {
               break;
             }
           } catch (err) {
-            console.error(
+            logger.error(
               `Error with search query ${JSON.stringify(searchQuery)}:`,
               err
             );
@@ -655,7 +625,7 @@ async function getAllElementsForProject(projectName) {
 
     return enhancedElements;
   } catch (error) {
-    console.error("Error getting all elements for project:", error);
+    logger.error("Error getting all elements for project:", error);
     return [];
   }
 }
@@ -674,7 +644,7 @@ async function getCostElementsByProject(projectName) {
     });
 
     if (!project) {
-      console.warn(`Project not found with name: ${projectName}`);
+      logger.warn(`Project not found with name: ${projectName}`);
       return {
         elements: [],
         summary: {
@@ -746,7 +716,7 @@ async function getCostElementsByProject(projectName) {
       },
     };
   } catch (error) {
-    console.error("Error getting cost elements by project:", error);
+    logger.error("Error getting cost elements by project:", error);
     return {
       elements: [],
       summary: {
@@ -798,7 +768,7 @@ async function getCostElementsByEbkpCode(ebkpCode) {
           });
         }
       } catch (error) {
-        console.warn(`Could not find project with ID ${projectId}`);
+        logger.warn(`Could not find project with ID ${projectId}`);
       }
     }
 
@@ -835,7 +805,7 @@ async function getCostElementsByEbkpCode(ebkpCode) {
       },
     };
   } catch (error) {
-    console.error("Error getting cost elements by EBKP code:", error);
+    logger.error("Error getting cost elements by EBKP code:", error);
     return {
       elements: [],
       summary: {
@@ -910,7 +880,7 @@ async function saveCostDataBatch(
       }
     );
     if (!qtoProject) {
-      console.warn(
+      logger.warn(
         `Project ${projectName} not found. Cannot update cost elements.`
       );
       return { insertedCount: 0, message: "Project not found" };
@@ -921,7 +891,7 @@ async function saveCostDataBatch(
     const originalTimestamp = qtoProject.metadata?.upload_timestamp;
     let kafkaMetadata = null;
     if (!originalTimestamp) {
-      console.error(
+      logger.error(
         `CRITICAL: Original upload_timestamp missing in metadata for project ${projectName} (ID: ${projectId}). Kafka messages for cost elements might be inaccurate.`
       );
       // Create a fallback kafkaMetadata to allow processing, but log critical warning
@@ -932,7 +902,7 @@ async function saveCostDataBatch(
           qtoProject.updated_at?.toISOString() || new Date().toISOString(), // Fallback timestamp
         fileId: qtoProject.metadata?.file_id || projectId.toString(),
       };
-      console.warn(
+      logger.warn(
         "Using fallback Kafka metadata due to missing upload_timestamp:",
         JSON.stringify(kafkaMetadata)
       );
@@ -1142,7 +1112,7 @@ async function saveCostDataBatch(
             costDataDoc = newCostDataDoc;
             costDataId = newCostDataId.toString();
           } catch (err) {
-            console.error(
+            logger.error(
               `Failed to create costData for Excel LEAF ${excelEbkp}: ${err.message}`
             );
             missingCostDataCount++;
@@ -1201,7 +1171,7 @@ async function saveCostDataBatch(
       kafkaSent: kafkaResult?.count || 0,
     };
   } catch (error) {
-    console.error("Error processing cost elements batch:", error);
+    logger.error("Error processing cost elements batch:", error);
     throw error;
   }
 }
@@ -1260,9 +1230,41 @@ async function getAllProjects() {
 
     return formattedProjects;
   } catch (error) {
-    console.error("Error getting all projects:", error);
+    logger.error("Error getting all projects:", error);
     return [];
   }
+}
+
+/**
+ * Get the projects collection from QTO database
+ */
+async function getProjectsCollection() {
+  await ensureConnection();
+  return qtoDb.collection("projects");
+}
+
+/**
+ * Get the elements collection from QTO database
+ */
+async function getElementsCollection() {
+  await ensureConnection();
+  return qtoDb.collection("elements");
+}
+
+/**
+ * Get the kennwerte collection from cost database
+ */
+async function getKennwerteCollection() {
+  await ensureConnection();
+  return costDb.collection("kennwerte");
+}
+
+/**
+ * Get the costElements collection from cost database
+ */
+async function getCostElementsCollection() {
+  await ensureConnection();
+  return costDb.collection("costElements");
 }
 
 module.exports = {
@@ -1280,5 +1282,9 @@ module.exports = {
   getElementEbkpCode,
   getAllProjects,
   getCostDb,
+  getProjectsCollection,
+  getElementsCollection,
+  getKennwerteCollection,
+  getCostElementsCollection,
   ObjectId,
 };

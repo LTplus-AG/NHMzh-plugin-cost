@@ -50,12 +50,27 @@ export class ExcelService {
     };
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     
+    // Create worksheet data
+    const wsData: Array<Array<string | number>> = [headers];
+    
     // Add data rows
     stats.forEach(stat => {
       const kennwert = kennwerte[stat.code];
-      const row: any[] = [stat.code, kennwert !== undefined ? kennwert : ''];
-      worksheet.addRow(row);
+      const row: Array<string | number> = [stat.code, kennwert !== undefined ? kennwert : ''];
+      
+      // Add quantity columns based on selected quantity type
+      // Assuming quantityColumns is defined elsewhere or passed as an argument
+      // For now, we'll just add the kennwert and then unit/totalCost
+      row.push(stat.code); // eBKP Code
+      row.push(kennwert !== undefined ? kennwert : ''); // Kennwert
+      row.push(stat.unit || ''); // Unit
+      row.push(stat.totalCost || 0); // Total Cost
+      
+      wsData.push(row);
     });
+    
+    // Add data rows to worksheet
+    wsData.forEach(row => worksheet.addRow(row));
     
     // Auto-fit columns
     worksheet.columns.forEach(column => {

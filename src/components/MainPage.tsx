@@ -27,6 +27,7 @@ import SmartExcelButton from "./SmartExcelButton";
 import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService } from "../utils/excelService";
 import ExcelImportDialog from "./ExcelImportDialog";
+import logger from '../utils/logger';
 
 const getAvailableQuantities = (el: MongoElement) => {
   const quantities = [];
@@ -180,7 +181,7 @@ const MainPage = () => {
       const savedSelections = localStorage.getItem(`cost-plugin-quantity-selections-${selectedProject}`);
       return savedSelections ? JSON.parse(savedSelections) : {};
     } catch (error) {
-      console.warn('Failed to load saved quantity selections:', error);
+      logger.warn('Failed to load saved quantity selections:', error);
       return {};
     }
   });
@@ -205,11 +206,39 @@ const MainPage = () => {
     recordImport,
   } = useExcelDialog();
 
+  // Function to load kennwerte from backend database
+  const loadKennwerteFromBackend = useCallback(async (projectName: string) => {
+    try {
+      const response = await fetch(`${backendUrl}/get-kennwerte/${encodeURIComponent(projectName)}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.kennwerte && Object.keys(data.kennwerte).length > 0) {
+          logger.info(`Loaded ${Object.keys(data.kennwerte).length} kennwerte from backend for project ${projectName}`);
+          return data.kennwerte;
+        } else {
+          logger.info(`No kennwerte found in backend response for project ${projectName}`);
+          return {};
+        }
+      } else if (response.status === 404) {
+        logger.info(`No saved kennwerte found for project ${projectName} (this is normal for new projects)`);
+        return {};
+      } else {
+        logger.warn(`Failed to load kennwerte for project ${projectName}: ${response.status} ${response.statusText}`);
+        return {};
+      }
+    } catch (error) {
+      logger.error("Error loading kennwerte from backend:", error);
+      return {};
+    }
+  }, [backendUrl]);
+
   // Load Kennwerte from backend when project changes
   useEffect(() => {
     if (selectedProject) {
       isLoadingKennwerteRef.current = true;
-      loadKennwerteFromBackend(selectedProject).finally(() => {
+      loadKennwerteFromBackend(selectedProject).then((loadedKennwerte) => {
+        setKennwerte(loadedKennwerte);
+      }).finally(() => {
         // Set loading to false after a small delay to ensure the state has been updated
         setTimeout(() => {
           isLoadingKennwerteRef.current = false;
@@ -219,53 +248,11 @@ const MainPage = () => {
       // No project selected, clear kennwerte
       setKennwerte({});
     }
-  }, [selectedProject]);
-
-  // Function to load kennwerte from backend database
-  const loadKennwerteFromBackend = async (projectName: string) => {
-    try {
-      const backendUrl = import.meta.env.VITE_COST_BACKEND_URL || 'http://localhost:8001';
-      const response = await fetch(`${backendUrl}/get-kennwerte/${projectName}`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.kennwerte && typeof data.kennwerte === 'object') {
-          setKennwerte(data.kennwerte);
-          console.log(`Loaded ${Object.keys(data.kennwerte).length} kennwerte from backend for project ${projectName}`);
-        } else {
-          // Don't reset to empty object, keep existing state
-          console.log(`No kennwerte found in backend response for project ${projectName}`);
-        }
-      } else if (response.status === 404) {
-        // Project not found or no kennwerte saved yet - this is normal for new projects
-        console.log(`No saved kennwerte found for project ${projectName} (this is normal for new projects)`);
-        // Don't reset kennwerte here - let the user start fresh
-      } else {
-        console.warn(`Failed to load kennwerte for project ${projectName}: ${response.status} ${response.statusText}`);
-      }
-    } catch (error) {
-      console.error("Error loading kennwerte from backend:", error);
-      // Don't reset kennwerte on error - keep existing state
-    }
-  };
-
-  // Save Kennwerte to backend whenever they change
-  useEffect(() => {
-    // Don't save on initial mount, when no project is selected, or while loading
-    if (!selectedProject || isLoadingKennwerteRef.current) return;
-    
-    // Save after a debounce delay, regardless of whether kennwerte is empty
-    // This ensures that clearing kennwerte also gets persisted
-    const timeoutId = setTimeout(() => {
-      saveKennwerteToBackend(selectedProject, kennwerte);
-    }, 1500); // Increased debounce to 1500ms to avoid too many saves
-
-    return () => clearTimeout(timeoutId);
-  }, [kennwerte, selectedProject]);
+  }, [selectedProject, loadKennwerteFromBackend]);
 
   // Function to save kennwerte to backend database
-  const saveKennwerteToBackend = async (projectName: string, kennwerteData: Record<string, number>) => {
+  const saveKennwerteToBackend = useCallback(async (projectName: string, kennwerteData: Record<string, number>) => {
     try {
-      const backendUrl = import.meta.env.VITE_COST_BACKEND_URL || 'http://localhost:8001';
       const response = await fetch(`${backendUrl}/save-kennwerte`, {
         method: "POST",
         headers: {
@@ -279,15 +266,29 @@ const MainPage = () => {
 
       if (response.ok) {
         await response.json();
-        console.log(`Saved kennwerte to backend for project ${projectName}`);
+        logger.info(`Saved kennwerte to backend for project ${projectName}`);
         setLastSaved(new Date().toLocaleTimeString('de-CH'));
       } else {
-        console.error("Failed to save kennwerte to backend");
+        logger.error("Failed to save kennwerte to backend");
       }
     } catch (error) {
-      console.error("Error saving kennwerte to backend:", error);
+      logger.error("Error saving kennwerte to backend:", error);
     }
-  };
+  }, [backendUrl]);
+
+  // Save Kennwerte to backend whenever they change
+  useEffect(() => {
+    // Don't save on initial mount, when no project is selected, or while loading
+    if (!selectedProject || isLoadingKennwerteRef.current) return;
+    
+    // Save after a debounce delay, regardless of whether kennwerte is empty
+    // This ensures that clearing kennwerte also gets persisted
+    const timeoutId = setTimeout(() => {
+      saveKennwerteToBackend(selectedProject, kennwerte);
+    }, 1500); // Increased debounce to 1500ms to avoid too many saves
+
+    return () => clearTimeout(timeoutId);
+  }, [kennwerte, selectedProject, saveKennwerteToBackend]);
 
   // Save quantity selections to localStorage whenever they change (project-specific)
   useEffect(() => {
@@ -299,12 +300,14 @@ const MainPage = () => {
       setLastSaved(new Date().toLocaleTimeString('de-CH'));
 
     } catch (error) {
-      console.warn('Failed to save quantity selections to localStorage:', error);
+      logger.warn('Failed to save quantity selections to localStorage:', error);
     }
   }, [quantitySelections, selectedProject]);
 
   const fetchElementsForProject = useCallback(
     async (projectName: string | null) => {
+      logger.info(`fetchElementsForProject called with projectName: ${projectName}`);
+      
       if (!projectName) {
         setCurrentElements([]);
         setLoadingElements(false);
@@ -319,10 +322,12 @@ const MainPage = () => {
       try {
         const encodedProjectName = encodeURIComponent(projectName);
         if (!backendUrl) {
+          logger.error('No backendUrl available');
           setLoadingElements(false);
           return [];
         }
         const apiUrl = `${backendUrl}/project-elements/${encodedProjectName}`;
+        logger.info(`Fetching elements from: ${apiUrl}`);
         const response = await fetch(apiUrl);
         if (!response.ok) {
           throw new Error(
@@ -341,7 +346,7 @@ const MainPage = () => {
             setModelMetadata({
               filename: metadata.filename,
               element_count: elements.length,
-              upload_timestamp: metadata.timestamp,
+              upload_timestamp: metadata.upload_timestamp,
             });
           } else {
             setModelMetadata({
@@ -434,7 +439,7 @@ const MainPage = () => {
           return [];
         }
       } catch (error) {
-        console.error("Error fetching project elements:", error);
+        logger.error("Error fetching project elements:", error);
         setCurrentElements([]);
         setEbkpStats([]);
         setModelMetadata(null);
@@ -443,7 +448,7 @@ const MainPage = () => {
         setLoadingElements(false);
       }
     },
-    [backendUrl, selectedProject]
+    [backendUrl, quantitySelections]
   );
 
   useEffect(() => {
@@ -461,7 +466,7 @@ const MainPage = () => {
             setSelectedProject(projects[0].name);
           }
         } catch (error) {
-          console.error("Failed to fetch projects:", error);
+          logger.error("Failed to fetch projects:", error);
           setProjectsList([]);
         } finally {
           setLoadingProjects(false);
@@ -479,7 +484,7 @@ const MainPage = () => {
       setEbkpStats([]);
       setModelMetadata(null);
     }
-  }, [selectedProject]);
+  }, [selectedProject, fetchElementsForProject]);
 
   const handleProjectChange = (event: SelectChangeEvent<string>) => {
     const newProjectName = event.target.value;
@@ -505,9 +510,9 @@ const MainPage = () => {
         recalculateStats({});
       }
       
-      console.log(`Cleared all saved data for project ${selectedProject}`);
+      logger.info(`Cleared all saved data for project ${selectedProject}`);
     } catch (error) {
-      console.warn('Failed to clear saved data:', error);
+      logger.warn('Failed to clear saved data:', error);
     }
   };
 
@@ -545,15 +550,13 @@ const MainPage = () => {
 
   const handleConfirmCosts = async (/* enhancedData: EnhancedCostItem[] */) => {
     if (!selectedProject || !modelMetadata) {
-      console.error("Project or model metadata not available.");
+      logger.error("Project or model metadata not available.");
         return;
       }
 
-    const project = projectsList.find((p) => p.name === selectedProject);
-    if (!project) {
-      console.error("Selected project not found in project list.");
-      return;
-    }
+    // Debug logging
+    logger.info("ModelMetadata:", modelMetadata);
+    logger.info("Upload timestamp:", modelMetadata.upload_timestamp);
 
     interface KafkaElementCost {
       id: string;
@@ -584,10 +587,12 @@ const MainPage = () => {
     const kafkaMessage = {
       project: selectedProject,
       filename: modelMetadata.filename,
-      timestamp: new Date().toISOString(),
-      fileId: project.id,
+      timestamp: modelMetadata.upload_timestamp || new Date().toISOString(), // Use original timestamp
+      fileId: modelMetadata.project_id || selectedProject, // Use project_id from metadata
       data: dataForKafka,
     };
+
+    logger.info("Kafka message being sent:", kafkaMessage);
 
     try {
       const response = await fetch(`${backendUrl}/confirm-costs`, {
@@ -597,14 +602,14 @@ const MainPage = () => {
       });
 
       if (response.ok) {
-        console.log("Cost data confirmed and sent to Kafka.");
+        logger.info("Cost data confirmed and sent to Kafka.");
         setPreviewModalOpen(false);
       } else {
         const errorData = await response.json();
-        console.error("Failed to confirm cost data:", errorData.message);
+        logger.error("Failed to confirm cost data:", errorData.message);
       }
     } catch (error) {
-      console.error("Error confirming cost data:", error);
+      logger.error("Error confirming cost data:", error);
     }
   };
 
@@ -714,7 +719,7 @@ const MainPage = () => {
       });
       recordExport();
     } catch (error) {
-      console.error('Excel export failed:', error);
+      logger.error('Excel export failed:', error);
     } finally {
       setIsExporting(false);
     }
@@ -759,13 +764,13 @@ const MainPage = () => {
                   disabled={loadingProjects}
                 >
                   {loadingProjects && (
-                    <MenuItem value="" disabled>
+                    <MenuItem key="loading" value="" disabled>
                       <CircularProgress size={20} sx={{ mr: 1 }} />
                       Lade Projekte...
                     </MenuItem>
                   )}
                   {!loadingProjects && projectsList.length === 0 && (
-                    <MenuItem value="" disabled>
+                    <MenuItem key="no-projects" value="" disabled>
                       Keine Projekte gefunden
                     </MenuItem>
                   )}
@@ -940,7 +945,7 @@ const MainPage = () => {
               stats={ebkpStats}
               kennwerte={kennwerte}
               onKennwertChange={(code: string, value: number) => {
-                console.log(`Updating kennwert for ${code}: ${value}`);
+                logger.debug(`Updating kennwert for ${code}: ${value}`);
                 setKennwerte((prev) => ({ ...prev, [code]: value }))
               }}
               onQuantityTypeChange={handleQuantityTypeChange}

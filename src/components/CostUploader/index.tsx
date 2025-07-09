@@ -15,7 +15,8 @@ import PreviewModal, { EnhancedCostItem } from "./PreviewModal";
 import BimMapper from "./BimMapper";
 import { MongoElement } from "../../types/common.types";
 import { useCostCalculation } from "../../hooks/useCostCalculation";
-import { getProjects, confirmCosts } from "../../services/costApi"; // Assuming costApi.ts exists
+import { costApi } from "../../services/costApi";
+import logger from '../../utils/logger';
 
 // Define the custom event type
 interface BimMappingStatusEvent extends CustomEvent {
@@ -110,14 +111,14 @@ const CostUploader = ({
 
   const handleConfirmPreview = async (enhancedData: EnhancedCostItem[]) => {
     if (!metaFile) {
-      console.error("Cannot confirm preview without metaFile.");
+      logger.error("Cannot confirm preview without metaFile.");
       handleClosePreviewInternal();
       return;
     }
     setIsLoading(true);
     setMappingMessage("Kostendaten werden gespeichert...");
     try {
-      console.log(
+      logger.info(
         `Sending ${enhancedData.length} matched QTO elements to update costElements (Excel data already saved in costData)`
       );
       const allExcelItems = metaFile
@@ -136,15 +137,20 @@ const CostUploader = ({
         return result;
       };
       const flattenedExcelItems = getAllItems(allExcelItems);
-      console.log(
+      logger.info(
         `Including ${flattenedExcelItems.length} Excel items for reference (already saved in costData)`
       );
-      const response = await confirmCosts({
-        projectName: projectName,
-        matchedItems: enhancedData,
-        allExcelItems: flattenedExcelItems,
+      const response = await costApi.confirmCosts({
+        project: projectName,
+        data: enhancedData.map(item => ({
+          id: item.id,
+          cost: Number(item.totalCost) || 0,
+          ebkp_code: item.ebkp
+        }))
       });
-      if (response.status === "success") {
+
+      if (response.success) {
+        handleClosePreviewInternal();
         if (onFileUploaded) {
           const fileName = metaFile.file.name;
           const currentDate = new Date().toLocaleString("de-CH");
@@ -153,13 +159,13 @@ const CostUploader = ({
           onFileUploaded(fileName, currentDate, status, costData, true);
         }
       } else {
-        console.error(
+        logger.error(
           "Error saving cost data backend:",
           response.message || "Unknown error"
         );
       }
     } catch (error) {
-      console.error("Failed to send cost data batch:", error);
+      logger.error("Failed to send cost data batch:", error);
     } finally {
       setIsLoading(false);
       handleClosePreviewInternal();
@@ -175,10 +181,8 @@ const CostUploader = ({
 
     try {
       const result = await parseExcelFile(file);
-      console.log(
-        "Excel parsing complete.",
-        result.valid ? "Valid." : "Invalid.",
-        `Missing: ${result.missingHeaders?.join(", ")}`
+      logger.info(
+        `Excel parsing complete. ${result.valid ? "Valid." : "Invalid."} Missing: ${result.missingHeaders?.join(", ")}`
       );
 
       const initialMetaFile: MetaFile = {
@@ -218,27 +222,30 @@ const CostUploader = ({
       };
       const flattenedExcelItems = getAllItems(costData);
 
-      const response = await confirmCosts({
-        projectName: projectName,
-        excelItems: flattenedExcelItems,
-        replaceExisting: true,
+      const response = await costApi.confirmCosts({
+        project: projectName,
+        data: flattenedExcelItems.map(item => ({
+          id: item.id || '',
+          cost: Number(item.totalCost) || 0,
+          ebkp_code: item.ebkp || ''
+        }))
       });
 
-      if (response.status !== "success") {
-        console.error("Error saving Excel data:", response.message);
+      if (response.success) {
+        logger.info("Excel data saved successfully. Proceeding to UI update.");
+        handleQuantitiesMapped(mappedItemsCount);
+        setMappingMessage("Excel-Daten verarbeitet. Starte BIM-Abgleich...");
+        setIsLoading(false);
+      } else {
+        logger.error("Error saving Excel data:", response.message);
         setMappingMessage(
           response.message || "Fehler beim Speichern der Excel-Daten."
         );
         setIsLoading(false);
         return;
       }
-
-      console.log("Excel data saved successfully. Proceeding to UI update.");
-      handleQuantitiesMapped(mappedItemsCount);
-      setMappingMessage("Excel-Daten verarbeitet. Starte BIM-Abgleich...");
-      setIsLoading(false);
     } catch (error) {
-      console.error("Error processing file upload:", error);
+      logger.error("Error processing file upload:", error);
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -250,7 +257,7 @@ const CostUploader = ({
 
   const handleQuantitiesMapped = useCallback(
     (mappedCount: number) => {
-      console.log(
+      logger.info(
         `BIM quantities mapped callback received: ${mappedCount} items updated.`
       );
       setMappedItemsCount(mappedCount);
@@ -303,7 +310,7 @@ const CostUploader = ({
   useEffect(() => {
     async function fetchProjects() {
       try {
-        await getProjects();
+        await costApi.getProjects();
         // ... (handle project data)
       } catch (error) {
         // ... (handle error)
@@ -314,7 +321,7 @@ const CostUploader = ({
 
   useEffect(() => {
     if (triggerPreview && !previewOpen && metaFile) {
-      console.log("Preview triggered by prop change.");
+      logger.info("Preview triggered by prop change.");
       handleShowPreview();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

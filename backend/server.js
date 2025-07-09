@@ -8,24 +8,21 @@ const rateLimit = require("express-rate-limit");
 const helmet = require("helmet");
 const { body, param, validationResult } = require("express-validator");
 const timeout = require("connect-timeout");
+const logger = require('./logger');
+
+const config = require("./config");
 const {
   connectToMongoDB,
   getAllProjects,
   getAllElementsForProject,
   getCostDb,
+  getProjectsCollection,
+  getElementsCollection,
+  getKennwerteCollection,
+  getCostElementsCollection,
 } = require("./mongodb");
 
 dotenv.config();
-
-const config = {
-  kafka: {
-    broker: process.env.KAFKA_BROKER || "broker:29092",
-    costTopic: process.env.KAFKA_COST_TOPIC || "cost-data",
-  },
-  server: {
-    port: parseInt(process.env.HTTP_PORT || "8001"),
-  },
-};
 
 const app = express();
 const producer = new Kafka({
@@ -45,6 +42,26 @@ app.use(helmet({
 // Add request timeout handling (30 seconds)
 app.use(timeout('30s'));
 
+// --- CORS Configuration ---
+// Apply CORS before rate limiting to ensure CORS headers are always sent
+const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:4004").split(",").filter(Boolean);
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+      callback(null, true);
+    } else {
+      logger.warn(`CORS blocked origin: ${origin}`);
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
 // --- Rate Limiting ---
 // Default rate limiter - 100 requests per 15 minutes per IP
 const defaultLimiter = rateLimit({
@@ -53,6 +70,8 @@ const defaultLimiter = rateLimit({
   message: "Too many requests from this IP, please try again later.",
   standardHeaders: true,
   legacyHeaders: false,
+  // Skip rate limiting for health checks
+  skip: (req) => req.path === '/health',
 });
 
 // Strict rate limiter for write operations - 20 requests per 15 minutes per IP
@@ -67,18 +86,7 @@ const strictLimiter = rateLimit({
 // Apply default rate limiting to all routes
 app.use(defaultLimiter);
 
-// --- CORS Configuration ---
-const allowedOrigins = (process.env.CORS_ORIGINS || "").split(",").filter(Boolean);
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-}));
+// Parse JSON bodies
 app.use(express.json({ limit: "1mb" }));
 
 // --- Input Validation Middleware ---
@@ -100,25 +108,16 @@ const unitCostsByEbkph = {};
 async function loadUnitCostsFromDatabase() {
   try {
     await connectToMongoDB();
-    const db = getCostDb();
-    
-    // Load all kennwerte from the database
-    const kennwerteCollection = db.collection("kennwerte");
-    const allKennwerte = await kennwerteCollection.find({}).toArray();
-    
-    // Clear existing data
-    Object.keys(unitCostsByEbkph).forEach(key => delete unitCostsByEbkph[key]);
-    
-    // Populate unitCostsByEbkph from all projects
-    allKennwerte.forEach(doc => {
-      if (doc.kennwerte) {
-        Object.assign(unitCostsByEbkph, doc.kennwerte);
-      }
+    const costDb = await getCostDb();
+    const collection = costDb.collection("unit_cost");
+    const docs = await collection.find({}).toArray();
+    const unitCostsByEbkph = {};
+    docs.forEach((doc) => {
+      unitCostsByEbkph[doc.ebkph] = doc.unit_cost;
     });
-    
-    console.log(`Loaded ${Object.keys(unitCostsByEbkph).length} unit costs from DB.`);
-      } catch (error) {
-    console.error("Error loading unit costs from database:", error);
+    logger.info(`Loaded ${Object.keys(unitCostsByEbkph).length} unit costs from DB.`);
+  } catch (error) {
+    logger.error("Error loading unit costs from database:", error);
   }
 }
 
@@ -128,7 +127,7 @@ app.get("/projects", haltOnTimedout, async (req, res) => {
     const projects = await getAllProjects();
     res.status(200).json(projects);
   } catch (error) {
-    console.error("Error fetching projects:", error);
+    logger.error("Error fetching projects:", error);
     res.status(500).json({ error: "Failed to get projects" });
   }
 });
@@ -142,19 +141,41 @@ app.get("/project-elements/:projectName",
     try {
       const elements = await getAllElementsForProject(projectName);
       
-      // Include model metadata if available
-      const modelMetadata = {
+      // Get the actual project metadata from QTO database
+      const projectsCollection = await getProjectsCollection();
+      const project = await projectsCollection.findOne({
+        name: { $regex: new RegExp(`^${projectName}$`, "i") }
+      });
+      
+      // Extract metadata from the project document
+      let modelMetadata = {
         filename: `${projectName}.ifc`,
         element_count: elements.length,
-        upload_timestamp: new Date().toISOString()
+        upload_timestamp: new Date().toISOString(),
+        project_id: null
       };
+      
+      if (project && project.metadata) {
+        modelMetadata = {
+          filename: project.metadata.filename || `${projectName}.ifc`,
+          element_count: elements.length,
+          upload_timestamp: project.metadata.upload_timestamp || project.created_at || new Date().toISOString(),
+          project_id: project._id.toString()
+        };
+        logger.info(`Project metadata for ${projectName}:`, {
+          filename: modelMetadata.filename,
+          upload_timestamp: modelMetadata.upload_timestamp,
+          project_id: modelMetadata.project_id,
+          raw_metadata: project.metadata
+        });
+      }
       
       res.status(200).json({
         elements,
         modelMetadata
       });
     } catch (error) {
-      console.error(`Error fetching elements for project ${projectName}:`, error);
+      logger.error(`Error fetching elements for project ${projectName}:`, error);
       res.status(500).json({ error: "Failed to fetch project elements" });
     }
   }
@@ -172,18 +193,13 @@ app.get("/get-kennwerte/:projectName",
   async (req, res) => {
     const { projectName } = req.params;
     try {
-      await connectToMongoDB();
-      const db = getCostDb();
-      
-      const kennwerteDoc = await db.collection("kennwerte").findOne({ projectName });
-      
-      if (kennwerteDoc && kennwerteDoc.kennwerte) {
-        res.status(200).json({ kennwerte: kennwerteDoc.kennwerte });
-      } else {
-        res.status(200).json({ kennwerte: {} });
-      }
+      const kennwerteCollection = await getKennwerteCollection();
+      const kennwerte = await kennwerteCollection.findOne({
+        project: projectName,
+      });
+      res.status(200).json({ kennwerte: kennwerte?.kennwerte || {} });
     } catch (error) {
-      console.error("Error fetching kennwerte:", error);
+      logger.error("Error fetching kennwerte:", error);
       res.status(500).json({ error: "Failed to fetch kennwerte" });
     }
   }
@@ -198,31 +214,24 @@ app.post("/save-kennwerte",
   async (req, res) => {
     const { projectName, kennwerte } = req.body;
     
+    logger.info(`Saving kennwerte for project: ${projectName}, kennwerte count: ${Object.keys(kennwerte).length}`);
+    
     try {
-      await connectToMongoDB();
-      const db = getCostDb();
-      
-      // Save kennwerte to database
-      await db.collection("kennwerte").updateOne(
-        { projectName },
-        { 
-          $set: { 
-            kennwerte,
-            updatedAt: new Date()
-          },
-          $setOnInsert: {
-            createdAt: new Date()
-          }
-        },
+      const kennwerteCollection = await getKennwerteCollection();
+      const result = await kennwerteCollection.replaceOne(
+        { project: projectName },
+        { project: projectName, kennwerte, timestamp: new Date().toISOString() },
         { upsert: true }
       );
+      
+      logger.info(`Kennwerte save result: matched=${result.matchedCount}, modified=${result.modifiedCount}, upserted=${result.upsertedCount}`);
       
       // Update the in-memory cache
       Object.assign(unitCostsByEbkph, kennwerte);
       
       res.status(200).json({ message: "Kennwerte saved successfully" });
     } catch (error) {
-      console.error("Error saving kennwerte:", error);
+      logger.error("Error saving kennwerte:", error);
       res.status(500).json({ error: "Failed to save kennwerte" });
     }
   }
@@ -235,7 +244,7 @@ app.post("/reapply-costs",
   haltOnTimedout,
   async (req, res) => {
     const { projectName } = req.body;
-    console.log(`Re-applying costs for project: ${projectName}`);
+    logger.info(`Re-applying costs for project: ${projectName}`);
     // In a real scenario, this would trigger a background job
     res.status(200).json({ message: "Cost re-application process initiated" });
   }
@@ -263,7 +272,7 @@ app.post("/confirm-costs",
         ],
       });
       
-      console.log(`Sent ${kafkaMessage.data.length} cost elements to Kafka for project ${kafkaMessage.project}`);
+      logger.info(`Sent ${kafkaMessage.data.length} cost elements to Kafka for project ${kafkaMessage.project}`);
       
       res.status(200).json({
         status: "success",
@@ -271,7 +280,7 @@ app.post("/confirm-costs",
         count: kafkaMessage.data.length
       });
     } catch (error) {
-      console.error("Error sending cost data to Kafka:", error);
+      logger.error("Error sending cost data to Kafka:", error);
       res.status(500).json({ 
         status: "error",
         error: "Failed to send cost data to Kafka" 
@@ -303,7 +312,7 @@ app.use((err, req, res, next) => {
   } else if (req.timedout) {
     res.status(503).json({ error: 'Request timeout' });
   } else {
-    console.error('Unhandled error:', err);
+    logger.error('Unhandled error:', err);
     res.status(500).json({ 
       error: 'Internal server error',
       message: process.env.NODE_ENV === 'development' ? err.message : undefined
@@ -316,24 +325,24 @@ const server = http.createServer(app);
 async function run() {
   await connectToMongoDB();
   await loadUnitCostsFromDatabase(); // Load costs on startup
-  console.log("MongoDB connected.");
+  logger.info("MongoDB connected.");
   
   await producer.connect();
   costProducerConnected = true;
-  console.log("Kafka Producer connected.");
+  logger.info("Kafka Producer connected.");
 
   producer.on(producer.events.DISCONNECT, () => {
       costProducerConnected = false;
-    console.log("Kafka Producer disconnected.");
+    logger.info("Kafka Producer disconnected.");
   });
 
   server.listen(config.server.port, () => {
-    console.log(`HTTP server listening on port ${config.server.port}`);
+    logger.info(`HTTP server listening on port ${config.server.port}`);
   });
 }
 
 run().catch((error) => {
-  console.error("Failed to start server:", error);
+  logger.error("Failed to start server:", error);
   process.exit(1);
 });
 
