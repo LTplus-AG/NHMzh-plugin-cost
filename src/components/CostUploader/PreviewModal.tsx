@@ -31,7 +31,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import WarningIcon from "@mui/icons-material/Warning";
 import InfoIcon from "@mui/icons-material/Info";
 import { MetaFile, CostItem } from "./types";
-import { useKafka } from "../../contexts/KafkaContext";
+import { useApi } from "../../contexts/ApiContext";
 
 // Define a more specific type for the enhanced data passed to onConfirm
 // Based on the structure created in handleConfirm
@@ -84,12 +84,6 @@ interface ElementInfo {
   elementCount: number;
   projects: string[];
   costCodes: string[];
-}
-
-// Define the structure for the WebSocket response
-interface WebSocketResponse {
-  matchingCodes: { code: string; unitCost: number; elementCount: number }[];
-  ifcCodeCount?: number;
 }
 
 // Define an interface for the data expected in window.__ELEMENT_INFO
@@ -157,7 +151,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
   const [potentialMatches, setPotentialMatches] = useState<MatchInfo[]>([]);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState(0);
-  const { getAreaData } = useKafka();
+  const { getAreaData } = useApi();
 
   const costItems = metaFile?.data
     ? Array.isArray(metaFile.data)
@@ -219,7 +213,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       costCodes: [],
     };
 
-    // Here we can use pre-cached data from the WebSocket connection
+    // Here we can use pre-cached data from the application
     // This data is already in window.__ELEMENT_INFO if available
     if (
       (
@@ -383,64 +377,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
 
     setPotentialMatches(matches);
     setLoading(false);
-
-    // In background, try to get more accurate data from WebSocket
-    fetchMatchDataFromWebSocket();
-  };
-
-  // Try to get more accurate data using WebSocket
-  const fetchMatchDataFromWebSocket = async () => {
-    try {
-      const requestCodeMatching = (
-        window as Window &
-          typeof globalThis & {
-            requestCodeMatching?: () => Promise<WebSocketResponse | null>;
-          }
-      ).requestCodeMatching;
-
-      if (typeof requestCodeMatching === "function") {
-        const response = await requestCodeMatching(); // Use the specific type here
-
-        if (
-          response &&
-          response.matchingCodes &&
-          response.matchingCodes.length > 0
-        ) {
-          // We got better data, update our matches
-          // Define a type for the match object coming from the server if possible
-          // For now, using explicit properties
-          const serverMatches = response.matchingCodes.map(
-            (match: {
-              code: string;
-              unitCost: number;
-              elementCount: number;
-            }) => ({
-              code: match.code,
-              costUnit: match.unitCost,
-              elementCount: match.elementCount,
-              excelItem: costItemsByEbkp[normalizeEbkpCode(match.code)],
-            })
-          );
-
-          // Only update if we got meaningful data
-          if (serverMatches.length > 0) {
-            setPotentialMatches(serverMatches);
-          }
-
-          // Update element info if available
-          if (response.ifcCodeCount) {
-            setElementInfo((prev) => ({
-              ...prev!,
-              elementCount: response.ifcCodeCount || prev?.elementCount || 0,
-              projects: ["Current Project"],
-            }));
-          }
-        }
-      }
-    } catch (error) {
-      console.warn("Couldn't get WebSocket data, using local analysis", error);
-      // We already did local analysis, so this is just extra info
-    }
   };
 
   // Group potential matches by primary code

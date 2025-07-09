@@ -7,7 +7,7 @@ import {
   SetStateAction,
 } from "react";
 import { MetaFile, CostItem } from "./types";
-import { useKafka } from "../../contexts/KafkaContext";
+import { useApi } from "../../contexts/ApiContext";
 import EbkpMapper from "./EbkpMapper";
 import { MongoElement } from "../../types/common.types";
 
@@ -50,7 +50,7 @@ const BimMapper = ({
   setMappingMessage,
   ifcElements,
 }: BimMapperProps) => {
-  const { connectionStatus, sendMessage, registerMessageHandler } = useKafka();
+  const { reapplyCostData } = useApi();
 
   const [mapper, setMapper] = useState<EbkpMapper | null>(null);
 
@@ -67,44 +67,17 @@ const BimMapper = ({
       console.log("Data already submitted to server, skipping reapply");
       return false;
     }
-    if (connectionStatus !== "CONNECTED") {
-      console.warn("Cannot request reapply: WebSocket not connected");
-      return false;
-    }
     try {
-      const reapplyMessageId = `reapply_${Date.now()}${Math.random()
-        .toString(36)
-        .substring(2, 10)}`;
-      const reapplyMessage = {
-        type: "reapply_costs",
-        timestamp: new Date().toISOString(),
-        messageId: reapplyMessageId,
-        projectName,
-      };
       console.log(`Sending reapply request for project ${projectName}`);
-      await new Promise<void>((resolve, reject) => {
-        registerMessageHandler(reapplyMessageId, (response) => {
-          if (response.status === "success") {
+      await reapplyCostData(projectName);
             console.log("Server re-applied cost data successfully");
-            dataSubmittedRef.current = true;
-            resolve();
-          } else {
-            console.error("Error re-applying cost data:", response.message);
-            reject(new Error("Re-apply request failed"));
-          }
-        });
-        try {
-          sendMessage(JSON.stringify(reapplyMessage));
-        } catch (error) {
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
+      dataSubmittedRef.current = true; // Prevent re-submission
       return true;
     } catch (error) {
-      console.error("Error in requestReapplyCostData:", error);
+      console.error("Error re-applying cost data:", error);
       return false;
     }
-  }, [connectionStatus, sendMessage, registerMessageHandler, projectName]);
+  }, [projectName, reapplyCostData]);
 
   // Initialize the mapper
   const initializeMapper = useCallback(() => {

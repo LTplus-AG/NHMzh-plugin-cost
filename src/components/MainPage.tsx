@@ -15,9 +15,9 @@ import {
   Typography
 } from "@mui/material";
 import { useCallback, useEffect, useState, useRef } from "react";
-import { useKafka } from "../contexts/KafkaContext";
+import { useApi } from "../contexts/ApiContext";
 import { MongoElement } from "../types/common.types";
-import PreviewModal, { EnhancedCostItem } from "./CostUploader/PreviewModal";
+import PreviewModal from "./CostUploader/PreviewModal";
 import EbkpCostForm, { EbkpStat } from "./EbkpCostForm";
 import { MetaFile } from "./CostUploader/types";
 import ProjectMetadataDisplay, {
@@ -105,6 +105,42 @@ const getSelectedQuantity = (
   };
 };
 
+const formatCurrency = (value: number): string => {
+  // For values under 10,000, show with 2 decimal places
+  if (value < 10000) {
+    return value.toLocaleString('de-CH', { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    });
+  }
+  
+  // For values 10k-999k, show without decimals
+  if (value < 1000000) {
+    return value.toLocaleString('de-CH', { 
+      minimumFractionDigits: 0, 
+      maximumFractionDigits: 0 
+    });
+  }
+  
+  // For millions (1M - 999M)
+  if (value < 1000000000) {
+    const millions = value / 1000000;
+    // Always show 3 decimal places for millions
+    return millions.toLocaleString('de-CH', { 
+      minimumFractionDigits: 3, 
+      maximumFractionDigits: 3 
+    }) + ' Mio.';
+  }
+  
+  // For billions
+  const billions = value / 1000000000;
+  // Always show 3 decimal places for billions
+  return billions.toLocaleString('de-CH', { 
+    minimumFractionDigits: 3, 
+    maximumFractionDigits: 3 
+  }) + ' Mrd.';
+};
+
 interface Project {
   id: string;
   name: string;
@@ -129,7 +165,7 @@ const MainPage = () => {
     null
   );
 
-  const { backendUrl } = useKafka();
+  const { backendUrl } = useApi();
 
   const [loadingElements, setLoadingElements] = useState(false);
   const [currentElements, setCurrentElements] = useState<MongoElement[]>([]);
@@ -242,7 +278,7 @@ const MainPage = () => {
       });
 
       if (response.ok) {
-        const result = await response.json();
+        await response.json();
         console.log(`Saved kennwerte to backend for project ${projectName}`);
         setLastSaved(new Date().toLocaleTimeString('de-CH'));
       } else {
@@ -507,120 +543,73 @@ const MainPage = () => {
     setPreviewModalOpen(true);
   };
 
-  const handleConfirmCosts = async (enhancedData: EnhancedCostItem[]) => {
-    try {
-      if (!selectedProject) {
-        console.error('Missing project');
+  const handleConfirmCosts = async (/* enhancedData: EnhancedCostItem[] */) => {
+    if (!selectedProject || !modelMetadata) {
+      console.error("Project or model metadata not available.");
         return;
       }
 
-      // Get WebSocket connection
-      const ws = (window as { ws?: WebSocket }).ws;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.warn("WebSocket not connected, trying to reconnect");
-        try {
-          const wsUrl: string =
-            (window as { VITE_WEBSOCKET_URL?: string }).VITE_WEBSOCKET_URL ||
-            import.meta.env.VITE_WEBSOCKET_URL ||
-            "ws://localhost:8001";
-          const newWs = new WebSocket(wsUrl);
-          (window as { ws?: WebSocket }).ws = newWs;
-          await new Promise((resolve, reject) => {
-            newWs.onopen = resolve;
-            newWs.onerror = reject;
-            setTimeout(() => reject(new Error("WS connect timeout")), 5000);
-          });
-        } catch (error) {
-          console.error("Failed to connect to WebSocket:", error);
-          throw new Error("WebSocket connection failed");
-        }
-      }
+    const project = projectsList.find((p) => p.name === selectedProject);
+    if (!project) {
+      console.error("Selected project not found in project list.");
+      return;
+    }
 
-      // Create message ID
-      const messageId = `batch_${Date.now()}${Math.random()
-        .toString(36)
-        .substring(2, 7)}`;
+    interface KafkaElementCost {
+      id: string;
+      cost: number;
+      cost_unit: number;
+    }
+    const dataForKafka: KafkaElementCost[] = [];
 
-      // Create Excel items from current cost data
-      const allExcelItems = ebkpStats
-        .filter(stat => stat.quantity > 0 && kennwerte[stat.code] > 0)
-        .map(stat => ({
-          ebkp: stat.code,
-          bezeichnung: `${stat.code} - Baugruppe`,
-          menge: stat.quantity,
-          einheit: stat.unit || 'm²',
-          kennwert: kennwerte[stat.code] || 0,
-          chf: (kennwerte[stat.code] || 0) * stat.quantity,
-          totalChf: (kennwerte[stat.code] || 0) * stat.quantity,
-          category: stat.code.charAt(0),
-          level: "1",
-          is_structural: true,
-          fire_rating: "",
-          area: stat.quantity,
-          areaSource: "BIM"
-        }));
-
-      // Send WebSocket message
-      const message = {
-        type: "save_cost_batch_full",
-        messageId,
-        payload: {
-          projectName: selectedProject,
-          matchedItems: enhancedData,
-          allExcelItems: allExcelItems,
-        },
-      };
-
-      const wsToUse = (window as { ws?: WebSocket }).ws;
-      if (!wsToUse) {
-        throw new Error("WebSocket not available");
-      }
-      wsToUse.send(JSON.stringify(message));
-      console.log(`Full cost batch sent to server for project ${selectedProject}`);
-
-      // Wait for response
-      const response = await new Promise((resolve, reject) => {
-        const responseHandler = (event: MessageEvent) => {
-          try {
-            const responseData = JSON.parse(event.data);
-            if (
-              responseData.type === "save_cost_batch_full_response" &&
-              responseData.messageId === messageId
-            ) {
-              wsToUse?.removeEventListener("message", responseHandler);
-              clearTimeout(timeoutId);
-              resolve(responseData);
-            }
-          } catch {
-            /* Ignore */
+    ebkpStats.forEach((stat) => {
+      const unitCost = kennwerte[stat.code] || 0;
+      if (unitCost > 0 && stat.elements) {
+        stat.elements.forEach((element) => {
+          if (element.global_id) {
+            const selectedQty = getSelectedQuantity(
+              element,
+              quantitySelections[stat.code]
+            );
+            dataForKafka.push({
+              id: element.global_id,
+              cost: selectedQty.value * unitCost,
+              cost_unit: unitCost,
+            });
           }
-        };
-        wsToUse?.addEventListener("message", responseHandler);
-        const timeoutId = setTimeout(() => {
-          wsToUse?.removeEventListener("message", responseHandler);
-          reject(new Error("Timeout waiting for save_cost_batch_full_response"));
-        }, 30000);
-        wsToUse?.addEventListener("close", () => clearTimeout(timeoutId), {
-          once: true,
         });
+      }
+    });
+
+    const kafkaMessage = {
+      project: selectedProject,
+      filename: modelMetadata.filename,
+      timestamp: new Date().toISOString(),
+      fileId: project.id,
+      data: dataForKafka,
+    };
+
+    try {
+      const response = await fetch(`${backendUrl}/confirm-costs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(kafkaMessage),
       });
 
-      const responseData = response as { status?: string; message?: string };
-      if (responseData.status === "success") {
-        console.log('Cost data uploaded successfully:', response);
-        // Close the preview modal
+      if (response.ok) {
+        console.log("Cost data confirmed and sent to Kafka.");
         setPreviewModalOpen(false);
-        // Optionally show success message or refresh data
       } else {
-        console.error('Error saving cost data backend:', responseData.message || "Unknown error");
+        const errorData = await response.json();
+        console.error("Failed to confirm cost data:", errorData.message);
       }
-      
     } catch (error) {
-      console.error('Error uploading cost data:', error);
+      console.error("Error confirming cost data:", error);
     }
   };
 
-  const recalculateStats = useCallback((newQuantitySelections: Record<string, string>) => {
+  const recalculateStats = useCallback(
+    (newQuantitySelections: Record<string, string>) => {
     if (currentElements.length === 0) return;
     
     const statMap: Record<string, { 
@@ -747,15 +736,14 @@ const MainPage = () => {
       sx={{
         padding: "0",
         display: "flex",
-        flexDirection: "column",
         overflow: "hidden",
         height: "100%",
+        width: "100%",
       }}
     >
-      <Box className="w-full flex" sx={{ flexGrow: 1, overflow: "hidden" }}>
         {/* Sidebar */}
         <div className="w-1/4 min-w-[300px] max-w-[400px] px-8 pt-4 pb-0 bg-light text-primary flex flex-col h-full overflow-y-auto">
-          <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full text-left">
             <Typography variant="h3" className="text-5xl mb-2" color="primary">
               Kosten
             </Typography>
@@ -791,7 +779,37 @@ const MainPage = () => {
               </FormControl>
             </div>
 
-
+            {/* Total Cost Display - Similar to LCA plugin */}
+            {selectedProject && (
+              <Box
+                sx={{
+                  mb: 3,
+                  mt: 3,
+                  p: 2,
+                  background: "linear-gradient(to right top, #F1D900, #fff176)",
+                  borderRadius: "4px",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "center",
+                  minHeight: "80px",
+                }}
+              >
+                <Typography
+                  variant="subtitle2"
+                  sx={{ mb: 0.5, fontWeight: 600, fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.7)" }}
+                >
+                  Gesamtkosten
+                </Typography>
+                <Typography
+                  variant="h4"
+                  component="p"
+                  color="common.black"
+                  fontWeight="bold"
+                >
+                  CHF {formatCurrency(totalCost)}
+                </Typography>
+              </Box>
+            )}
 
             {/* Data persistence section */}
             <Box sx={{ mt: 2, mb: 2 }}>
@@ -829,7 +847,11 @@ const MainPage = () => {
 
             <div className="flex flex-col mt-auto">
               <div>
-                <Typography variant="subtitle1" className="font-bold mb-2" color="primary">
+              <Typography
+                variant="subtitle1"
+                className="font-bold mb-2"
+                color="primary"
+              >
                   Anleitung
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
@@ -837,12 +859,18 @@ const MainPage = () => {
                   {Instructions.map((step) => (
                     <Step key={step.label} active>
                       <StepLabel>
-                        <span className="leading-tight text-primary font-bold" style={{ color: "#0D0599" }}>
+                      <span
+                        className="leading-tight text-primary font-bold"
+                        style={{ color: "#0D0599" }}
+                      >
                           {step.label}
                         </span>
                       </StepLabel>
                       <div className="ml-8 -mt-2">
-                        <span className="text-sm leading-none" style={{ color: "#0D0599" }}>
+                      <span
+                        className="text-sm leading-none"
+                        style={{ color: "#0D0599" }}
+                      >
                           {step.description}
                         </span>
                       </div>
@@ -855,7 +883,7 @@ const MainPage = () => {
         </div>
 
         {/* Main area */}
-        <div className="flex-1 w-3/4 flex flex-col overflow-y-auto">
+      <div className="flex-1 flex flex-col overflow-y-auto">
           <div className="flex-grow px-10 pt-4 pb-10 flex flex-col">
             <Box
               sx={{
@@ -923,7 +951,6 @@ const MainPage = () => {
 
           </div>
         </div>
-      </Box>
       
       <PreviewModal
         open={previewModalOpen}

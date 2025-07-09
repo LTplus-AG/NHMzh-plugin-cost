@@ -22,7 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-socket-backend/.env
+backend/.env
 public/templates/*
 .env.fastbim
 .env*

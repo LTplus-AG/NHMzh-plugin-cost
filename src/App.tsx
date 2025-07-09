@@ -1,17 +1,17 @@
-import { Route, Routes } from "react-router-dom";
+import "./App.css";
 import MainPage from "./components/MainPage";
-import { ThemeProvider } from "@emotion/react";
+import { ApiProvider } from "./contexts/ApiContext";
+import { ThemeProvider } from "@mui/material/styles";
 import theme from "./theme";
-import { KafkaProvider } from "./contexts/KafkaContext";
 
 function App() {
   return (
     <ThemeProvider theme={theme}>
-      <KafkaProvider>
-        <Routes>
-          <Route path="/" element={<MainPage />} />
-        </Routes>
-      </KafkaProvider>
+      <ApiProvider>
+        <div className="flex h-screen bg-background text-text_primary">
+          <MainPage />
+        </div>
+      </ApiProvider>
     </ThemeProvider>
   );
 }

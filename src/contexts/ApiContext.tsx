@@ -74,7 +74,7 @@ interface ProjectData {
 }
 
 // Kafka context interface
-interface KafkaContextProps {
+interface ApiContextProps {
   connectionStatus: string;
   sendCostUpdate: (
     projectId: string,
@@ -94,11 +94,6 @@ interface KafkaContextProps {
   formatTimestamp: (timestamp: string) => string;
   mongoGetElements: (projectId: string) => Promise<MongoElement[]>;
   mongoProjectCost: (projectId: string) => Promise<number>;
-  sendMessage: (message: string) => void;
-  registerMessageHandler: (
-    messageId: string,
-    handler: (data: Record<string, unknown>) => void
-  ) => void;
   availableEbkpCodes: EbkpCodeInfo[];
   matchCodes: (codes: string[]) => EbkpCodeInfo[];
   getProjectElements: (projectName: string) => Promise<ProjectElement[]>;
@@ -107,12 +102,13 @@ interface KafkaContextProps {
     ebkpCode: string
   ) => Promise<ProjectElement[]>;
   getCachedProjectData: (projectName: string) => ProjectData | null;
+  reapplyCostData: (projectName: string) => Promise<void>; // Add new function
   backendUrl: string;
   ebkpLoadError: string | null; // Add error state to interface
 }
 
 // Create the context with default values
-const KafkaContext = createContext<KafkaContextProps>({
+const ApiContext = createContext<ApiContextProps>({
   connectionStatus: "DISCONNECTED",
   sendCostUpdate: async () => false,
   projectUpdates: {},
@@ -122,22 +118,21 @@ const KafkaContext = createContext<KafkaContextProps>({
   formatTimestamp: (timestamp) => timestamp,
   mongoGetElements: async () => [],
   mongoProjectCost: async () => 0,
-  sendMessage: () => {},
-  registerMessageHandler: () => {},
   availableEbkpCodes: [],
   matchCodes: () => [],
   getProjectElements: async () => [],
   getElementsForEbkp: async () => [],
   getCachedProjectData: () => null,
+  reapplyCostData: async () => {}, // Add dummy implementation
   backendUrl: "",
   ebkpLoadError: null,
 });
 
 // Export the hook to use the context
-export const useKafka = () => useContext(KafkaContext);
+export const useApi = () => useContext(ApiContext);
 
 // Provider component props
-interface KafkaProviderProps {
+interface ApiProviderProps {
   children: ReactNode;
 }
 
@@ -187,9 +182,9 @@ interface BackendElement {
   [key: string]: unknown;
 }
 
-export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
-  const [connectionStatus, setConnectionStatus] = useState("CONNECTED"); // Always connected for HTTP
-  const [projectUpdates, setProjectUpdates] = useState<
+export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
+  const [connectionStatus] = useState("CONNECTED");
+  const [projectUpdates] = useState<
     Record<string, ProjectUpdate>
   >({});
   const [availableEbkpCodes, setAvailableEbkpCodes] = useState<
@@ -314,19 +309,6 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
       console.error("Error formatting timestamp:", error);
       return timestamp;
     }
-  };
-
-  // Legacy function - no longer needed for HTTP
-  const sendMessage = (message: string): void => {
-    console.warn("sendMessage is deprecated for HTTP-based communication");
-  };
-
-  // Legacy function - no longer needed for HTTP
-  const registerMessageHandler = (
-    messageId: string,
-    handler: (data: Record<string, unknown>) => void
-  ): void => {
-    console.warn("registerMessageHandler is deprecated for HTTP-based communication");
   };
 
   // Function to match codes with available eBKP codes
@@ -544,8 +526,31 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     [projectDataCache]
   );
 
+  // Re-apply cost data
+  const reapplyCostData = async (projectName: string) => {
+    try {
+      const response = await fetch(`${backendUrl}/reapply-costs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ projectName }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.message || "Failed to re-apply cost data"
+        );
+      }
+    } catch (error) {
+      console.error("Error re-applying cost data:", error);
+      throw error;
+    }
+  };
+
   return (
-    <KafkaContext.Provider
+    <ApiContext.Provider
       value={{
         connectionStatus,
         sendCostUpdate,
@@ -556,8 +561,6 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         formatTimestamp,
         mongoGetElements: () => Promise.resolve([]),
         mongoProjectCost: () => Promise.resolve(0),
-        sendMessage,
-        registerMessageHandler,
         availableEbkpCodes,
         matchCodes,
         getProjectElements,
@@ -565,9 +568,10 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         getCachedProjectData,
         backendUrl,
         ebkpLoadError,
+        reapplyCostData, // Expose new function
       }}
     >
       {children}
-    </KafkaContext.Provider>
+    </ApiContext.Provider>
   );
 };

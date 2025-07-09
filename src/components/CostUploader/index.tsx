@@ -15,20 +15,7 @@ import PreviewModal, { EnhancedCostItem } from "./PreviewModal";
 import BimMapper from "./BimMapper";
 import { MongoElement } from "../../types/common.types";
 import { useCostCalculation } from "../../hooks/useCostCalculation";
-
-// Define the WebSocket response interfaces
-interface BatchResponseData {
-  type: string;
-  messageId: string;
-  status: "success" | "error";
-  message?: string;
-  insertedCount?: number;
-  result?: {
-    excelItemsInserted: number;
-    matchedItemsProcessed: number;
-    qtoElementsUpdated: number;
-  };
-}
+import { getProjects, confirmCosts } from "../../services/costApi"; // Assuming costApi.ts exists
 
 // Define the custom event type
 interface BimMappingStatusEvent extends CustomEvent {
@@ -152,73 +139,11 @@ const CostUploader = ({
       console.log(
         `Including ${flattenedExcelItems.length} Excel items for reference (already saved in costData)`
       );
-      let ws = (window as { ws?: WebSocket }).ws;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.warn("WebSocket not connected, trying to reconnect");
-        try {
-          const wsUrl: string =
-            (window as { VITE_WEBSOCKET_URL?: string }).VITE_WEBSOCKET_URL ||
-            import.meta.env.VITE_WEBSOCKET_URL ||
-            "ws://localhost:8001";
-          ws = new WebSocket(wsUrl);
-          (window as { ws?: WebSocket }).ws = ws;
-          await new Promise((resolve, reject) => {
-            if (ws) {
-              ws.onopen = resolve;
-              ws.onerror = reject;
-              setTimeout(() => reject(new Error("WS connect timeout")), 5000);
-            } else {
-              reject(new Error("WebSocket is undefined"));
-            }
-          });
-        } catch (error) {
-          console.error("Failed to connect to WebSocket:", error);
-          throw new Error("WebSocket connection failed");
-        }
-      }
-      const messageId = `batch_${Date.now()}${Math.random()
-        .toString(36)
-        .substring(2, 7)}`;
-      const message = {
-        type: "save_cost_batch_full",
-        messageId,
-        payload: {
-          projectName,
-          matchedItems: enhancedData,
-          allExcelItems: flattenedExcelItems,
-        },
-      };
-      ws.send(JSON.stringify(message));
-      console.log(`Full cost batch sent to server for project ${projectName}`);
-      const response: BatchResponseData = await new Promise(
-        (resolve, reject) => {
-          const responseHandler = (event: MessageEvent) => {
-            try {
-              const responseData: BatchResponseData = JSON.parse(event.data);
-              if (
-                responseData.type === "save_cost_batch_full_response" &&
-                responseData.messageId === messageId
-              ) {
-                ws?.removeEventListener("message", responseHandler);
-                clearTimeout(timeoutId);
-                resolve(responseData);
-              }
-            } catch {
-              /* Ignore */
-            }
-          };
-          ws?.addEventListener("message", responseHandler);
-          const timeoutId = setTimeout(() => {
-            ws?.removeEventListener("message", responseHandler);
-            reject(
-              new Error("Timeout waiting for save_cost_batch_full_response")
-            );
-          }, 30000);
-          ws?.addEventListener("close", () => clearTimeout(timeoutId), {
-            once: true,
-          });
-        }
-      );
+      const response = await confirmCosts({
+        projectName: projectName,
+        matchedItems: enhancedData,
+        allExcelItems: flattenedExcelItems,
+      });
       if (response.status === "success") {
         if (onFileUploaded) {
           const fileName = metaFile.file.name;
@@ -293,82 +218,11 @@ const CostUploader = ({
       };
       const flattenedExcelItems = getAllItems(costData);
 
-      let ws = (window as { ws?: WebSocket }).ws;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.warn(
-          "WebSocket not connected for Excel save, trying to reconnect"
-        );
-        try {
-          const wsUrl: string =
-            (window as { VITE_WEBSOCKET_URL?: string }).VITE_WEBSOCKET_URL ||
-            import.meta.env.VITE_WEBSOCKET_URL ||
-            "ws://localhost:8001";
-          ws = new WebSocket(wsUrl);
-          (window as { ws?: WebSocket }).ws = ws;
-          await new Promise((resolve, reject) => {
-            if (ws) {
-              ws.onopen = resolve;
-              ws.onerror = reject;
-              setTimeout(() => reject(new Error("WS connect timeout")), 5000);
-            } else {
-              reject(new Error("WebSocket is undefined"));
-            }
-          });
-        } catch (error) {
-          console.error("Failed to connect WebSocket for Excel save:", error);
-          throw new Error("WebSocket connection failed for Excel save");
-        }
-      }
-
-      const messageId = `upload_${Date.now()}${Math.random()
-        .toString(36)
-        .substring(2, 7)}`;
-      const message = {
-        type: "save_excel_data",
-        messageId,
-        payload: {
-          projectName,
-          excelItems: flattenedExcelItems,
-          replaceExisting: true,
-        },
-      };
-
-      console.log(
-        `Sending save_excel_data message (ID: ${messageId}) for replace`
-      );
-      ws.send(JSON.stringify(message));
-
-      const response = await new Promise<{ status: string; message: string }>(
-        (resolve, reject) => {
-          const responseHandler = (event: MessageEvent) => {
-            try {
-              const data = JSON.parse(event.data);
-              if (
-                data.type === "save_excel_data_response" &&
-                data.messageId === messageId
-              ) {
-                console.log(
-                  `Received save_excel_data_response (ID: ${messageId}):`,
-                  data
-                );
-                ws?.removeEventListener("message", responseHandler);
-                clearTimeout(timeoutId);
-                resolve(data);
-              }
-            } catch {
-              /* Ignore */
-            }
-          };
-          ws?.addEventListener("message", responseHandler);
-          const timeoutId = setTimeout(() => {
-            ws?.removeEventListener("message", responseHandler);
-            reject(new Error("Timeout waiting for save_excel_data_response"));
-          }, 15000);
-          ws?.addEventListener("close", () => clearTimeout(timeoutId), {
-            once: true,
-          });
-        }
-      );
+      const response = await confirmCosts({
+        projectName: projectName,
+        excelItems: flattenedExcelItems,
+        replaceExisting: true,
+      });
 
       if (response.status !== "success") {
         console.error("Error saving Excel data:", response.message);
@@ -444,6 +298,18 @@ const CostUploader = ({
         handleMappingStatus as EventListener
       );
     };
+  }, []);
+
+  useEffect(() => {
+    async function fetchProjects() {
+      try {
+        await getProjects();
+        // ... (handle project data)
+      } catch (error) {
+        // ... (handle error)
+      }
+    }
+    fetchProjects();
   }, []);
 
   useEffect(() => {

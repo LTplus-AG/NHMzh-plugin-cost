@@ -6,7 +6,7 @@ USAGE
     python plugin-cost/scripts/kafkacheck.py <directory_path> <file_pattern>
 
 Example:
-    python plugin-cost/scripts/kafkacheck.py "C:/Users/LouisTrümpler/Downloads" "topic-message"
+    python plugin-cost/scripts/kafkacheck.py "C:/Users/Louistrue/Downloads" "topic-message"    
 
 The script finds all files matching the pattern, extracts the cost data,
 and calculates the total cost across all items.
@@ -15,7 +15,7 @@ and calculates the total cost across all items.
 import json
 import sys
 import os
-from collections import defaultdict
+from collections import defaultdict, Counter
 from pathlib import Path
 import locale # For formatting currency
 
@@ -88,6 +88,27 @@ def main():
 
     if not all_rows:
         sys.exit("No cost items found in any processed file.")
+
+    # --- Check for duplicate IDs ---
+    all_ids = [row.get("id") for row in all_rows if row.get("id")]
+    print("\n=== ID UNIQUENESS CHECK ===")
+    if len(all_ids) != len(set(all_ids)):
+        print("🔴 Found duplicate IDs!")
+        id_counts = Counter(all_ids)
+        duplicates = {id: count for id, count in id_counts.items() if count > 1}
+        print(f"  - Total items: {len(all_rows)}")
+        print(f"  - Total unique IDs: {len(set(all_ids))}")
+        print(f"  - Number of duplicate IDs: {len(duplicates)}")
+        # Print details for a few duplicates
+        for i, (id, count) in enumerate(duplicates.items()):
+            if i >= 5:
+                print(f"  ... and {len(duplicates) - 5} more.")
+                break
+            print(f"  - ID '{id}' appears {count} times.")
+    else:
+        print("✅ All IDs are unique.")
+        print(f"  - Total items processed: {len(all_rows)}")
+
 
     # Calculate grand total cost
     grand_total_cost = 0.0

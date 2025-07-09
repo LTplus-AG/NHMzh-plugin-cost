@@ -45,8 +45,6 @@ async function connectToMongoDB() {
     let tempClient = null;
     try {
       tempClient = new MongoClient(mongoUri, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
         serverSelectionTimeoutMS: 5000,
         connectTimeoutMS: 10000,
       });
@@ -959,7 +957,7 @@ async function saveCostDataBatch(
         mappedCostItemsLookup.set(normalizeEbkpCode(item.ebkp), item);
     });
 
-    // 4. Fetch active QTO elements
+    // 4. Fetch only active QTO elements for the project
     const activeQtoElements = await qtoDatabase
       .collection("elements")
       .find({ project_id: projectId, status: "active" })
@@ -1056,9 +1054,7 @@ async function saveCostDataBatch(
             qtoElement.global_id || qtoElement._id.toString();
           if (!processedKafkaIds.has(kafkaMessageElementId)) {
             elementsForKafka.push({
-              id: kafkaMessageElementId, // Use global_id or fallback to _id for the Kafka message
-              project: projectName,
-              filename: kafkaMetadata.filename,
+              id: kafkaMessageElementId,
               cost: elementTotalCost,
               cost_unit: unitCost,
             });
@@ -1159,14 +1155,11 @@ async function saveCostDataBatch(
         // Add leaf Excel item to Kafka using costData ID
         if (costDataId && !processedKafkaIds.has(costDataId)) {
           elementsForKafka.push({
-            element_id: costDataId, // Use costData ID
-            id: costDataId, // Use costData ID
-            project: projectName,
-            filename: kafkaMetadata.filename,
-            cost: itemCostValue, // Cost from Excel leaf
+            id: costDataId,
+            cost: itemCostValue,
             cost_unit: costDataDoc.unit_cost || excelItem.kennwert || 0,
           });
-          processedKafkaIds.add(costDataId); // Track costData ID added to Kafka
+          processedKafkaIds.add(costDataId);
           processedExcelOnlyCount++;
         } else if (costDataId) {
         }
@@ -1238,6 +1231,16 @@ function getElementEbkpCode(element) {
 }
 
 /**
+ * Get the cost database instance
+ */
+function getCostDb() {
+  if (!costDb) {
+    throw new Error("Cost database not initialized. Call connectToMongoDB first.");
+  }
+  return costDb;
+}
+
+/**
  * Get all projects from QTO database
  */
 async function getAllProjects() {
@@ -1276,5 +1279,6 @@ module.exports = {
   getCostElementsByEbkpCode,
   getElementEbkpCode,
   getAllProjects,
+  getCostDb,
   ObjectId,
 };
