@@ -8,7 +8,7 @@ import React, {
 } from "react";
 import logger from '../utils/logger';
 import { CostItem } from "../components/CostUploader/types";
-import { costApi, CostUpdateNotification } from "../services/costApi";
+import { costApi } from "../services/costApi";
 import type { BackendElement as ApiBackendElement } from "../services/costApi";
 
 // Define types for cost items
@@ -229,20 +229,17 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
   const sendCostUpdate = async (
     projectId: string,
     projectName: string,
-
+    totalCost: number,
+    elementsWithCost: number
   ): Promise<boolean> => {
     try {
-      const notification: CostUpdateNotification = {
-        project: projectName,
-        timestamp: new Date().toISOString(),
-        elements: []
-      };
-
-      const response = await costApi.sendCostUpdate(notification);
-      return response.success;
+      // This function is kept for compatibility but doesn't do anything
+      // since the /send-cost-update endpoint doesn't exist on the backend
+      logger.info(`Cost update requested for project ${projectName}: ${totalCost} CHF (${elementsWithCost} elements)`);
+      return true;
     } catch (error) {
       logger.error(
-        `Error sending cost update for project ${projectId}:`,
+        `Error in sendCostUpdate for project ${projectId}:`,
         error
       );
       return false;

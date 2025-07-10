@@ -55,16 +55,8 @@ export class ExcelService {
     
     // Add data rows
     stats.forEach(stat => {
-      const kennwert = kennwerte[stat.code];
-      const row: Array<string | number> = [stat.code, kennwert !== undefined ? kennwert : ''];
-      
-      // Add quantity columns based on selected quantity type
-      // Assuming quantityColumns is defined elsewhere or passed as an argument
-      // For now, we'll just add the kennwert and then unit/totalCost
-      row.push(stat.code); // eBKP Code
-      row.push(kennwert !== undefined ? kennwert : ''); // Kennwert
-      row.push(stat.unit || ''); // Unit
-      row.push(stat.totalCost || 0); // Total Cost
+      const kennwert = kennwerte[stat.code] || 0;
+      const row: Array<string | number> = [stat.code, kennwert];
       
       wsData.push(row);
     });

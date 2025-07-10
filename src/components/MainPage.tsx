@@ -186,6 +186,7 @@ const MainPage = () => {
     }
   });
   const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const [isLoadingKennwerte, setIsLoadingKennwerte] = useState(false);
   
   // Add a ref to track if we're loading kennwerte
   const isLoadingKennwerteRef = useRef(false);
@@ -235,18 +236,18 @@ const MainPage = () => {
   // Load Kennwerte from backend when project changes
   useEffect(() => {
     if (selectedProject) {
+      setIsLoadingKennwerte(true);
       isLoadingKennwerteRef.current = true;
       loadKennwerteFromBackend(selectedProject).then((loadedKennwerte) => {
         setKennwerte(loadedKennwerte);
       }).finally(() => {
-        // Set loading to false after a small delay to ensure the state has been updated
-        setTimeout(() => {
-          isLoadingKennwerteRef.current = false;
-        }, 100);
+        setIsLoadingKennwerte(false);
+        isLoadingKennwerteRef.current = false;
       });
     } else {
       // No project selected, clear kennwerte
       setKennwerte({});
+      setIsLoadingKennwerte(false);
     }
   }, [selectedProject, loadKennwerteFromBackend]);
 
@@ -279,7 +280,7 @@ const MainPage = () => {
   // Save Kennwerte to backend whenever they change
   useEffect(() => {
     // Don't save on initial mount, when no project is selected, or while loading
-    if (!selectedProject || isLoadingKennwerteRef.current) return;
+    if (!selectedProject || isLoadingKennwerte || isLoadingKennwerteRef.current) return;
     
     // Save after a debounce delay, regardless of whether kennwerte is empty
     // This ensures that clearing kennwerte also gets persisted
@@ -346,7 +347,7 @@ const MainPage = () => {
             setModelMetadata({
               filename: metadata.filename,
               element_count: elements.length,
-              upload_timestamp: metadata.upload_timestamp,
+              upload_timestamp: metadata.timestamp,
             });
           } else {
             setModelMetadata({
@@ -548,7 +549,7 @@ const MainPage = () => {
     setPreviewModalOpen(true);
   };
 
-  const handleConfirmCosts = async (/* enhancedData: EnhancedCostItem[] */) => {
+  const handleConfirmCosts = async () => {
     if (!selectedProject || !modelMetadata) {
       logger.error("Project or model metadata not available.");
         return;
@@ -563,7 +564,7 @@ const MainPage = () => {
       cost: number;
       cost_unit: number;
     }
-    const dataForKafka: KafkaElementCost[] = [];
+    const costDataPayload: KafkaElementCost[] = [];
 
     ebkpStats.forEach((stat) => {
       const unitCost = kennwerte[stat.code] || 0;
@@ -574,7 +575,7 @@ const MainPage = () => {
               element,
               quantitySelections[stat.code]
             );
-            dataForKafka.push({
+            costDataPayload.push({
               id: element.global_id,
               cost: selectedQty.value * unitCost,
               cost_unit: unitCost,
@@ -587,9 +588,9 @@ const MainPage = () => {
     const kafkaMessage = {
       project: selectedProject,
       filename: modelMetadata.filename,
-      timestamp: modelMetadata.upload_timestamp || new Date().toISOString(), // Use original timestamp
-      fileId: modelMetadata.project_id || selectedProject, // Use project_id from metadata
-      data: dataForKafka,
+      timestamp: modelMetadata.upload_timestamp || new Date().toISOString(),
+      fileId: modelMetadata.project_id || selectedProject,
+      data: costDataPayload,
     };
 
     logger.info("Kafka message being sent:", kafkaMessage);

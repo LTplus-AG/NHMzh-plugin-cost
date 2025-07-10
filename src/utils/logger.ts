@@ -75,4 +75,5 @@ const logger = new Logger({
 });
 
 export default logger;
-export { Logger, LogLevel, LoggerConfig }; 
+export { Logger };
+export type { LogLevel, LoggerConfig }; 

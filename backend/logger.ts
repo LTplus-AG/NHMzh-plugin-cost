@@ -1,4 +1,12 @@
-const LOG_LEVELS = {
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+interface LoggerConfig {
+  level?: LogLevel;
+  prefix?: string;
+  enableTimestamp?: boolean;
+}
+
+const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
   warn: 2,
@@ -6,17 +14,21 @@ const LOG_LEVELS = {
 };
 
 class Logger {
-  constructor(config = {}) {
-    this.level = config.level || process.env.LOG_LEVEL || 'info';
+  private level: LogLevel;
+  private prefix: string;
+  private enableTimestamp: boolean;
+
+  constructor(config: LoggerConfig = {}) {
+    this.level = (config.level || process.env.LOG_LEVEL || 'info') as LogLevel;
     this.prefix = config.prefix || '[Cost-Backend]';
     this.enableTimestamp = config.enableTimestamp !== false;
   }
 
-  shouldLog(level) {
+  private shouldLog(level: LogLevel): boolean {
     return LOG_LEVELS[level] >= LOG_LEVELS[this.level];
   }
 
-  formatMessage(level, message, data) {
+  private formatMessage(level: LogLevel, message: string, data?: any): string {
     const timestamp = this.enableTimestamp ? new Date().toISOString() : '';
     const parts = [
       timestamp,
@@ -28,31 +40,31 @@ class Logger {
     return parts.join(' ');
   }
 
-  debug(message, data) {
+  debug(message: string, data?: any): void {
     if (this.shouldLog('debug')) {
       console.log(this.formatMessage('debug', message), data || '');
     }
   }
 
-  info(message, data) {
+  info(message: string, data?: any): void {
     if (this.shouldLog('info')) {
       console.log(this.formatMessage('info', message), data || '');
     }
   }
 
-  warn(message, data) {
+  warn(message: string, data?: any): void {
     if (this.shouldLog('warn')) {
       console.warn(this.formatMessage('warn', message), data || '');
     }
   }
 
-  error(message, error) {
+  error(message: string, error?: any): void {
     if (this.shouldLog('error')) {
       console.error(this.formatMessage('error', message), error || '');
     }
   }
 
-  setLevel(level) {
+  setLevel(level: LogLevel): void {
     this.level = level;
   }
 }
@@ -60,4 +72,4 @@ class Logger {
 // Create singleton instance
 const logger = new Logger();
 
-module.exports = logger; 
+export default logger; 

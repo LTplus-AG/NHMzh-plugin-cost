@@ -8,11 +8,17 @@ COPY package*.json ./
 # Install dependencies using npm install instead of npm ci to update package-lock.json
 RUN npm install
 
+# Copy TypeScript configuration
+COPY tsconfig.json ./
+
 # Bundle app source
 COPY . .
+
+# Build TypeScript
+RUN npm run build
 
 # Expose the HTTP port
 EXPOSE 8001
 
-# Start the server
-CMD [ "node", "server.js" ] 
+# Start the server from the compiled JavaScript
+CMD [ "node", "dist/server.js" ] 

@@ -36,16 +36,6 @@ export interface Project {
   metadata?: Record<string, unknown>;
 }
 
-export interface CostUpdateNotification {
-  project: string;
-  timestamp: string;
-  elements: Array<{
-    id: string;
-    cost: number;
-    ebkp_code: string;
-  }>;
-}
-
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8001";
 
 async function getProjects(): Promise<Project[]> {
@@ -86,7 +76,7 @@ async function saveKennwerte(projectName: string, kennwerte: Record<string, numb
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      project: projectName,
+      projectName,
       kennwerte,
       timestamp: new Date().toISOString(),
     }),
@@ -115,16 +105,6 @@ async function confirmCosts(payload: CostConfirmationPayload): Promise<ApiRespon
   return response.json();
 }
 
-async function sendCostUpdate(notification: CostUpdateNotification): Promise<ApiResponse> {
-  const response = await fetch(`${API_BASE_URL}/send-cost-update`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(notification),
-  });
-  if (!response.ok) throw new Error("Failed to send cost update");
-  return response.json();
-}
-
 // Export as a single object
 export const costApi = {
   getProjects,
@@ -134,5 +114,4 @@ export const costApi = {
   saveKennwerte,
   reapplyCosts,
   confirmCosts,
-  sendCostUpdate,
 }; 

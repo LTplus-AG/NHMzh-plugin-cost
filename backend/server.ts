@@ -1,17 +1,16 @@
-/* eslint-disable */
-const { Kafka } = require("kafkajs");
-const http = require("http");
-const dotenv = require("dotenv");
-const express = require("express");
-const cors = require("cors");
-const rateLimit = require("express-rate-limit");
-const helmet = require("helmet");
-const { body, param, validationResult } = require("express-validator");
-const timeout = require("connect-timeout");
-const logger = require('./logger');
+import { Kafka, Producer } from "kafkajs";
+import http from "http";
+import dotenv from "dotenv";
+import express, { Request, Response, NextFunction } from "express";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
+import { body, param, validationResult } from "express-validator";
+import timeout from "connect-timeout";
+import logger from './logger';
 
-const config = require("./config");
-const {
+import { config } from "./config";
+import {
   connectToMongoDB,
   getAllProjects,
   getAllElementsForProject,
@@ -20,12 +19,14 @@ const {
   getElementsCollection,
   getKennwerteCollection,
   getCostElementsCollection,
-} = require("./mongodb");
+  ElementsResponse,
+  Kennwerte,
+} from "./mongodb";
 
 dotenv.config();
 
 const app = express();
-const producer = new Kafka({
+const producer: Producer = new Kafka({
   clientId: "plugin-cost-http",
   brokers: [config.kafka.broker],
 }).producer();
@@ -90,7 +91,7 @@ app.use(defaultLimiter);
 app.use(express.json({ limit: "1mb" }));
 
 // --- Input Validation Middleware ---
-const handleValidationErrors = (req, res, next) => {
+const handleValidationErrors = (req: Request, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -99,19 +100,18 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 // --- Error Handling for Timeouts ---
-const haltOnTimedout = (req, res, next) => {
-  if (!req.timedout) next();
+const haltOnTimedout = (req: Request, res: Response, next: NextFunction) => {
+  if (!(req as any).timedout) next();
 };
 
 // --- Helper Functions ---
-const unitCostsByEbkph = {};
-async function loadUnitCostsFromDatabase() {
+const unitCostsByEbkph: Record<string, number> = {};
+async function loadUnitCostsFromDatabase(): Promise<void> {
   try {
     await connectToMongoDB();
     const costDb = await getCostDb();
     const collection = costDb.collection("unit_cost");
     const docs = await collection.find({}).toArray();
-    const unitCostsByEbkph = {};
     docs.forEach((doc) => {
       unitCostsByEbkph[doc.ebkph] = doc.unit_cost;
     });
@@ -122,7 +122,7 @@ async function loadUnitCostsFromDatabase() {
 }
 
 // --- API Routes ---
-app.get("/projects", haltOnTimedout, async (req, res) => {
+app.get("/projects", haltOnTimedout, async (req: Request, res: Response) => {
   try {
     const projects = await getAllProjects();
     res.status(200).json(projects);
@@ -136,7 +136,7 @@ app.get("/project-elements/:projectName",
   param('projectName').trim().notEmpty().withMessage('Project name is required'),
   handleValidationErrors,
   haltOnTimedout,
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     const { projectName } = req.params;
     try {
       const elements = await getAllElementsForProject(projectName);
@@ -152,7 +152,7 @@ app.get("/project-elements/:projectName",
         filename: `${projectName}.ifc`,
         element_count: elements.length,
         upload_timestamp: new Date().toISOString(),
-        project_id: null
+        project_id: null as string | null
       };
       
       if (project && project.metadata) {
@@ -170,10 +170,12 @@ app.get("/project-elements/:projectName",
         });
       }
       
-      res.status(200).json({
+      const response: ElementsResponse = {
         elements,
         modelMetadata
-      });
+      };
+      
+      res.status(200).json(response);
     } catch (error) {
       logger.error(`Error fetching elements for project ${projectName}:`, error);
       res.status(500).json({ error: "Failed to fetch project elements" });
@@ -181,7 +183,7 @@ app.get("/project-elements/:projectName",
   }
 );
 
-app.get("/available-ebkp-codes", haltOnTimedout, (req, res) => {
+app.get("/available-ebkp-codes", haltOnTimedout, (req: Request, res: Response) => {
   const codes = Object.keys(unitCostsByEbkph);
   res.status(200).json({ codes, count: codes.length });
 });
@@ -190,7 +192,7 @@ app.get("/get-kennwerte/:projectName",
   param('projectName').trim().notEmpty().withMessage('Project name is required'),
   handleValidationErrors,
   haltOnTimedout,
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     const { projectName } = req.params;
     try {
       const kennwerteCollection = await getKennwerteCollection();
@@ -211,7 +213,7 @@ app.post("/save-kennwerte",
   body('kennwerte').isObject().withMessage('Kennwerte must be an object'),
   handleValidationErrors,
   haltOnTimedout,
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     const { projectName, kennwerte } = req.body;
     
     logger.info(`Saving kennwerte for project: ${projectName}, kennwerte count: ${Object.keys(kennwerte).length}`);
@@ -242,13 +244,24 @@ app.post("/reapply-costs",
   body('projectName').trim().notEmpty().withMessage('Project name is required'),
   handleValidationErrors,
   haltOnTimedout,
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     const { projectName } = req.body;
     logger.info(`Re-applying costs for project: ${projectName}`);
     // In a real scenario, this would trigger a background job
     res.status(200).json({ message: "Cost re-application process initiated" });
   }
 );
+
+interface KafkaMessageData {
+  id: string;
+  [key: string]: any;
+}
+
+interface KafkaMessageBody {
+  data: KafkaMessageData[];
+  project?: string;
+  [key: string]: any;
+}
 
 app.post("/confirm-costs", 
   strictLimiter,
@@ -257,7 +270,7 @@ app.post("/confirm-costs",
   body('project').optional().trim().notEmpty(),
   handleValidationErrors,
   haltOnTimedout,
-  async (req, res) => {
+  async (req: Request<{}, {}, KafkaMessageBody>, res: Response) => {
     const kafkaMessage = req.body;
     
     try {
@@ -290,7 +303,7 @@ app.post("/confirm-costs",
 );
 
 // --- Health Check ---
-app.get("/health", (req, res) => {
+app.get("/health", (req: Request, res: Response) => {
   res.status(200).json({
     status: "UP",
     kafkaProducer: costProducerConnected ? "CONNECTED" : "DISCONNECTED",
@@ -299,17 +312,17 @@ app.get("/health", (req, res) => {
 });
 
 // --- 404 Handler ---
-app.use((req, res) => {
+app.use((req: Request, res: Response) => {
   res.status(404).json({ error: "Route not found" });
 });
 
 // --- Global Error Handler ---
-app.use((err, req, res, next) => {
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (err.code === 'EBADCSRFTOKEN') {
     res.status(403).json({ error: 'Invalid CSRF token' });
   } else if (err.message === 'Not allowed by CORS') {
     res.status(403).json({ error: 'CORS policy violation' });
-  } else if (req.timedout) {
+  } else if ((req as any).timedout) {
     res.status(503).json({ error: 'Request timeout' });
   } else {
     logger.error('Unhandled error:', err);
@@ -322,7 +335,7 @@ app.use((err, req, res, next) => {
 
 const server = http.createServer(app);
 
-async function run() {
+async function run(): Promise<void> {
   await connectToMongoDB();
   await loadUnitCostsFromDatabase(); // Load costs on startup
   logger.info("MongoDB connected.");
@@ -350,4 +363,4 @@ process.on("SIGINT", async () => {
   server.close(() => {
     producer.disconnect().then(() => process.exit(0));
   });
-});
+}); 
