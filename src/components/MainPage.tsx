@@ -15,9 +15,9 @@ import {
   Typography
 } from "@mui/material";
 import { useCallback, useEffect, useState, useRef } from "react";
-import { useKafka } from "../contexts/KafkaContext";
+import { useApi } from "../contexts/ApiContext";
 import { MongoElement } from "../types/common.types";
-import PreviewModal, { EnhancedCostItem } from "./CostUploader/PreviewModal";
+import PreviewModal from "./CostUploader/PreviewModal";
 import EbkpCostForm, { EbkpStat } from "./EbkpCostForm";
 import { MetaFile } from "./CostUploader/types";
 import ProjectMetadataDisplay, {
@@ -27,6 +27,7 @@ import SmartExcelButton from "./SmartExcelButton";
 import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService } from "../utils/excelService";
 import ExcelImportDialog from "./ExcelImportDialog";
+import logger from '../utils/logger';
 
 const getAvailableQuantities = (el: MongoElement) => {
   const quantities = [];
@@ -105,6 +106,42 @@ const getSelectedQuantity = (
   };
 };
 
+const formatCurrency = (value: number): string => {
+  // For values under 10,000, show with 2 decimal places
+  if (value < 10000) {
+    return value.toLocaleString('de-CH', { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    });
+  }
+  
+  // For values 10k-999k, show without decimals
+  if (value < 1000000) {
+    return value.toLocaleString('de-CH', { 
+      minimumFractionDigits: 0, 
+      maximumFractionDigits: 0 
+    });
+  }
+  
+  // For millions (1M - 999M)
+  if (value < 1000000000) {
+    const millions = value / 1000000;
+    // Always show 3 decimal places for millions
+    return millions.toLocaleString('de-CH', { 
+      minimumFractionDigits: 3, 
+      maximumFractionDigits: 3 
+    }) + ' Mio.';
+  }
+  
+  // For billions
+  const billions = value / 1000000000;
+  // Always show 3 decimal places for billions
+  return billions.toLocaleString('de-CH', { 
+    minimumFractionDigits: 3, 
+    maximumFractionDigits: 3 
+  }) + ' Mrd.';
+};
+
 interface Project {
   id: string;
   name: string;
@@ -129,7 +166,7 @@ const MainPage = () => {
     null
   );
 
-  const { backendUrl } = useKafka();
+  const { backendUrl } = useApi();
 
   const [loadingElements, setLoadingElements] = useState(false);
   const [currentElements, setCurrentElements] = useState<MongoElement[]>([]);
@@ -144,11 +181,12 @@ const MainPage = () => {
       const savedSelections = localStorage.getItem(`cost-plugin-quantity-selections-${selectedProject}`);
       return savedSelections ? JSON.parse(savedSelections) : {};
     } catch (error) {
-      console.warn('Failed to load saved quantity selections:', error);
+      logger.warn('Failed to load saved quantity selections:', error);
       return {};
     }
   });
   const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const [isLoadingKennwerte, setIsLoadingKennwerte] = useState(false);
   
   // Add a ref to track if we're loading kennwerte
   const isLoadingKennwerteRef = useRef(false);
@@ -169,67 +207,53 @@ const MainPage = () => {
     recordImport,
   } = useExcelDialog();
 
+  // Function to load kennwerte from backend database
+  const loadKennwerteFromBackend = useCallback(async (projectName: string) => {
+    try {
+      const response = await fetch(`${backendUrl}/get-kennwerte/${encodeURIComponent(projectName)}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.kennwerte && Object.keys(data.kennwerte).length > 0) {
+          logger.info(`Loaded ${Object.keys(data.kennwerte).length} kennwerte from backend for project ${projectName}`);
+          return data.kennwerte;
+        } else {
+          logger.info(`No kennwerte found in backend response for project ${projectName}`);
+          return {};
+        }
+      } else if (response.status === 404) {
+        logger.info(`No saved kennwerte found for project ${projectName} (this is normal for new projects)`);
+        return {};
+      } else {
+        logger.warn(`Failed to load kennwerte for project ${projectName}: ${response.status} ${response.statusText}`);
+        return {};
+      }
+    } catch (error) {
+      logger.error("Error loading kennwerte from backend:", error);
+      return {};
+    }
+  }, [backendUrl]);
+
   // Load Kennwerte from backend when project changes
   useEffect(() => {
     if (selectedProject) {
+      setIsLoadingKennwerte(true);
       isLoadingKennwerteRef.current = true;
-      loadKennwerteFromBackend(selectedProject).finally(() => {
-        // Set loading to false after a small delay to ensure the state has been updated
-        setTimeout(() => {
-          isLoadingKennwerteRef.current = false;
-        }, 100);
+      loadKennwerteFromBackend(selectedProject).then((loadedKennwerte) => {
+        setKennwerte(loadedKennwerte);
+      }).finally(() => {
+        setIsLoadingKennwerte(false);
+        isLoadingKennwerteRef.current = false;
       });
     } else {
       // No project selected, clear kennwerte
       setKennwerte({});
+      setIsLoadingKennwerte(false);
     }
-  }, [selectedProject]);
-
-  // Function to load kennwerte from backend database
-  const loadKennwerteFromBackend = async (projectName: string) => {
-    try {
-      const backendUrl = import.meta.env.VITE_COST_BACKEND_URL || 'http://localhost:8001';
-      const response = await fetch(`${backendUrl}/get-kennwerte/${projectName}`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.kennwerte && typeof data.kennwerte === 'object') {
-          setKennwerte(data.kennwerte);
-          console.log(`Loaded ${Object.keys(data.kennwerte).length} kennwerte from backend for project ${projectName}`);
-        } else {
-          // Don't reset to empty object, keep existing state
-          console.log(`No kennwerte found in backend response for project ${projectName}`);
-        }
-      } else if (response.status === 404) {
-        // Project not found or no kennwerte saved yet - this is normal for new projects
-        console.log(`No saved kennwerte found for project ${projectName} (this is normal for new projects)`);
-        // Don't reset kennwerte here - let the user start fresh
-      } else {
-        console.warn(`Failed to load kennwerte for project ${projectName}: ${response.status} ${response.statusText}`);
-      }
-    } catch (error) {
-      console.error("Error loading kennwerte from backend:", error);
-      // Don't reset kennwerte on error - keep existing state
-    }
-  };
-
-  // Save Kennwerte to backend whenever they change
-  useEffect(() => {
-    // Don't save on initial mount, when no project is selected, or while loading
-    if (!selectedProject || isLoadingKennwerteRef.current) return;
-    
-    // Save after a debounce delay, regardless of whether kennwerte is empty
-    // This ensures that clearing kennwerte also gets persisted
-    const timeoutId = setTimeout(() => {
-      saveKennwerteToBackend(selectedProject, kennwerte);
-    }, 1500); // Increased debounce to 1500ms to avoid too many saves
-
-    return () => clearTimeout(timeoutId);
-  }, [kennwerte, selectedProject]);
+  }, [selectedProject, loadKennwerteFromBackend]);
 
   // Function to save kennwerte to backend database
-  const saveKennwerteToBackend = async (projectName: string, kennwerteData: Record<string, number>) => {
+  const saveKennwerteToBackend = useCallback(async (projectName: string, kennwerteData: Record<string, number>) => {
     try {
-      const backendUrl = import.meta.env.VITE_COST_BACKEND_URL || 'http://localhost:8001';
       const response = await fetch(`${backendUrl}/save-kennwerte`, {
         method: "POST",
         headers: {
@@ -242,16 +266,30 @@ const MainPage = () => {
       });
 
       if (response.ok) {
-        const result = await response.json();
-        console.log(`Saved kennwerte to backend for project ${projectName}`);
+        await response.json();
+        logger.info(`Saved kennwerte to backend for project ${projectName}`);
         setLastSaved(new Date().toLocaleTimeString('de-CH'));
       } else {
-        console.error("Failed to save kennwerte to backend");
+        logger.error("Failed to save kennwerte to backend");
       }
     } catch (error) {
-      console.error("Error saving kennwerte to backend:", error);
+      logger.error("Error saving kennwerte to backend:", error);
     }
-  };
+  }, [backendUrl]);
+
+  // Save Kennwerte to backend whenever they change
+  useEffect(() => {
+    // Don't save on initial mount, when no project is selected, or while loading
+    if (!selectedProject || isLoadingKennwerte || isLoadingKennwerteRef.current) return;
+    
+    // Save after a debounce delay, regardless of whether kennwerte is empty
+    // This ensures that clearing kennwerte also gets persisted
+    const timeoutId = setTimeout(() => {
+      saveKennwerteToBackend(selectedProject, kennwerte);
+    }, 1500); // Increased debounce to 1500ms to avoid too many saves
+
+    return () => clearTimeout(timeoutId);
+  }, [kennwerte, selectedProject, saveKennwerteToBackend]);
 
   // Save quantity selections to localStorage whenever they change (project-specific)
   useEffect(() => {
@@ -263,12 +301,14 @@ const MainPage = () => {
       setLastSaved(new Date().toLocaleTimeString('de-CH'));
 
     } catch (error) {
-      console.warn('Failed to save quantity selections to localStorage:', error);
+      logger.warn('Failed to save quantity selections to localStorage:', error);
     }
   }, [quantitySelections, selectedProject]);
 
   const fetchElementsForProject = useCallback(
     async (projectName: string | null) => {
+      logger.info(`fetchElementsForProject called with projectName: ${projectName}`);
+      
       if (!projectName) {
         setCurrentElements([]);
         setLoadingElements(false);
@@ -283,10 +323,12 @@ const MainPage = () => {
       try {
         const encodedProjectName = encodeURIComponent(projectName);
         if (!backendUrl) {
+          logger.error('No backendUrl available');
           setLoadingElements(false);
           return [];
         }
         const apiUrl = `${backendUrl}/project-elements/${encodedProjectName}`;
+        logger.info(`Fetching elements from: ${apiUrl}`);
         const response = await fetch(apiUrl);
         if (!response.ok) {
           throw new Error(
@@ -398,7 +440,7 @@ const MainPage = () => {
           return [];
         }
       } catch (error) {
-        console.error("Error fetching project elements:", error);
+        logger.error("Error fetching project elements:", error);
         setCurrentElements([]);
         setEbkpStats([]);
         setModelMetadata(null);
@@ -407,7 +449,7 @@ const MainPage = () => {
         setLoadingElements(false);
       }
     },
-    [backendUrl, selectedProject]
+    [backendUrl, quantitySelections]
   );
 
   useEffect(() => {
@@ -425,7 +467,7 @@ const MainPage = () => {
             setSelectedProject(projects[0].name);
           }
         } catch (error) {
-          console.error("Failed to fetch projects:", error);
+          logger.error("Failed to fetch projects:", error);
           setProjectsList([]);
         } finally {
           setLoadingProjects(false);
@@ -443,7 +485,7 @@ const MainPage = () => {
       setEbkpStats([]);
       setModelMetadata(null);
     }
-  }, [selectedProject]);
+  }, [selectedProject, fetchElementsForProject]);
 
   const handleProjectChange = (event: SelectChangeEvent<string>) => {
     const newProjectName = event.target.value;
@@ -469,9 +511,9 @@ const MainPage = () => {
         recalculateStats({});
       }
       
-      console.log(`Cleared all saved data for project ${selectedProject}`);
+      logger.info(`Cleared all saved data for project ${selectedProject}`);
     } catch (error) {
-      console.warn('Failed to clear saved data:', error);
+      logger.warn('Failed to clear saved data:', error);
     }
   };
 
@@ -507,120 +549,73 @@ const MainPage = () => {
     setPreviewModalOpen(true);
   };
 
-  const handleConfirmCosts = async (enhancedData: EnhancedCostItem[]) => {
-    try {
-      if (!selectedProject) {
-        console.error('Missing project');
+  const handleConfirmCosts = async () => {
+    if (!selectedProject || !modelMetadata) {
+      logger.error("Project or model metadata not available.");
         return;
       }
 
-      // Get WebSocket connection
-      const ws = (window as { ws?: WebSocket }).ws;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.warn("WebSocket not connected, trying to reconnect");
-        try {
-          const wsUrl: string =
-            (window as { VITE_WEBSOCKET_URL?: string }).VITE_WEBSOCKET_URL ||
-            import.meta.env.VITE_WEBSOCKET_URL ||
-            "ws://localhost:8001";
-          const newWs = new WebSocket(wsUrl);
-          (window as { ws?: WebSocket }).ws = newWs;
-          await new Promise((resolve, reject) => {
-            newWs.onopen = resolve;
-            newWs.onerror = reject;
-            setTimeout(() => reject(new Error("WS connect timeout")), 5000);
-          });
-        } catch (error) {
-          console.error("Failed to connect to WebSocket:", error);
-          throw new Error("WebSocket connection failed");
-        }
-      }
+    // Debug logging
+    logger.info("ModelMetadata:", modelMetadata);
+    logger.info("Upload timestamp:", modelMetadata.upload_timestamp);
 
-      // Create message ID
-      const messageId = `batch_${Date.now()}${Math.random()
-        .toString(36)
-        .substring(2, 7)}`;
+    interface KafkaElementCost {
+      id: string;
+      cost: number;
+      cost_unit: number;
+    }
+    const costDataPayload: KafkaElementCost[] = [];
 
-      // Create Excel items from current cost data
-      const allExcelItems = ebkpStats
-        .filter(stat => stat.quantity > 0 && kennwerte[stat.code] > 0)
-        .map(stat => ({
-          ebkp: stat.code,
-          bezeichnung: `${stat.code} - Baugruppe`,
-          menge: stat.quantity,
-          einheit: stat.unit || 'm²',
-          kennwert: kennwerte[stat.code] || 0,
-          chf: (kennwerte[stat.code] || 0) * stat.quantity,
-          totalChf: (kennwerte[stat.code] || 0) * stat.quantity,
-          category: stat.code.charAt(0),
-          level: "1",
-          is_structural: true,
-          fire_rating: "",
-          area: stat.quantity,
-          areaSource: "BIM"
-        }));
-
-      // Send WebSocket message
-      const message = {
-        type: "save_cost_batch_full",
-        messageId,
-        payload: {
-          projectName: selectedProject,
-          matchedItems: enhancedData,
-          allExcelItems: allExcelItems,
-        },
-      };
-
-      const wsToUse = (window as { ws?: WebSocket }).ws;
-      if (!wsToUse) {
-        throw new Error("WebSocket not available");
-      }
-      wsToUse.send(JSON.stringify(message));
-      console.log(`Full cost batch sent to server for project ${selectedProject}`);
-
-      // Wait for response
-      const response = await new Promise((resolve, reject) => {
-        const responseHandler = (event: MessageEvent) => {
-          try {
-            const responseData = JSON.parse(event.data);
-            if (
-              responseData.type === "save_cost_batch_full_response" &&
-              responseData.messageId === messageId
-            ) {
-              wsToUse?.removeEventListener("message", responseHandler);
-              clearTimeout(timeoutId);
-              resolve(responseData);
-            }
-          } catch {
-            /* Ignore */
+    ebkpStats.forEach((stat) => {
+      const unitCost = kennwerte[stat.code] || 0;
+      if (unitCost > 0 && stat.elements) {
+        stat.elements.forEach((element) => {
+          if (element.global_id) {
+            const selectedQty = getSelectedQuantity(
+              element,
+              quantitySelections[stat.code]
+            );
+            costDataPayload.push({
+              id: element.global_id,
+              cost: selectedQty.value * unitCost,
+              cost_unit: unitCost,
+            });
           }
-        };
-        wsToUse?.addEventListener("message", responseHandler);
-        const timeoutId = setTimeout(() => {
-          wsToUse?.removeEventListener("message", responseHandler);
-          reject(new Error("Timeout waiting for save_cost_batch_full_response"));
-        }, 30000);
-        wsToUse?.addEventListener("close", () => clearTimeout(timeoutId), {
-          once: true,
         });
+      }
+    });
+
+    const kafkaMessage = {
+      project: selectedProject,
+      filename: modelMetadata.filename,
+      timestamp: modelMetadata.upload_timestamp || new Date().toISOString(),
+      fileId: modelMetadata.project_id || selectedProject,
+      data: costDataPayload,
+    };
+
+    logger.info("Kafka message being sent:", kafkaMessage);
+
+    try {
+      const response = await fetch(`${backendUrl}/confirm-costs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(kafkaMessage),
       });
 
-      const responseData = response as { status?: string; message?: string };
-      if (responseData.status === "success") {
-        console.log('Cost data uploaded successfully:', response);
-        // Close the preview modal
+      if (response.ok) {
+        logger.info("Cost data confirmed and sent to Kafka.");
         setPreviewModalOpen(false);
-        // Optionally show success message or refresh data
       } else {
-        console.error('Error saving cost data backend:', responseData.message || "Unknown error");
+        const errorData = await response.json();
+        logger.error("Failed to confirm cost data:", errorData.message);
       }
-      
     } catch (error) {
-      console.error('Error uploading cost data:', error);
+      logger.error("Error confirming cost data:", error);
     }
   };
 
-  const recalculateStats = useCallback((newQuantitySelections: Record<string, string>) => {
+  const recalculateStats = useCallback(
+    (newQuantitySelections: Record<string, string>) => {
     if (currentElements.length === 0) return;
     
     const statMap: Record<string, { 
@@ -725,7 +720,7 @@ const MainPage = () => {
       });
       recordExport();
     } catch (error) {
-      console.error('Excel export failed:', error);
+      logger.error('Excel export failed:', error);
     } finally {
       setIsExporting(false);
     }
@@ -747,15 +742,14 @@ const MainPage = () => {
       sx={{
         padding: "0",
         display: "flex",
-        flexDirection: "column",
         overflow: "hidden",
         height: "100%",
+        width: "100%",
       }}
     >
-      <Box className="w-full flex" sx={{ flexGrow: 1, overflow: "hidden" }}>
         {/* Sidebar */}
         <div className="w-1/4 min-w-[300px] max-w-[400px] px-8 pt-4 pb-0 bg-light text-primary flex flex-col h-full overflow-y-auto">
-          <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full text-left">
             <Typography variant="h3" className="text-5xl mb-2" color="primary">
               Kosten
             </Typography>
@@ -771,13 +765,13 @@ const MainPage = () => {
                   disabled={loadingProjects}
                 >
                   {loadingProjects && (
-                    <MenuItem value="" disabled>
+                    <MenuItem key="loading" value="" disabled>
                       <CircularProgress size={20} sx={{ mr: 1 }} />
                       Lade Projekte...
                     </MenuItem>
                   )}
                   {!loadingProjects && projectsList.length === 0 && (
-                    <MenuItem value="" disabled>
+                    <MenuItem key="no-projects" value="" disabled>
                       Keine Projekte gefunden
                     </MenuItem>
                   )}
@@ -791,7 +785,37 @@ const MainPage = () => {
               </FormControl>
             </div>
 
-
+            {/* Total Cost Display - Similar to LCA plugin */}
+            {selectedProject && (
+              <Box
+                sx={{
+                  mb: 3,
+                  mt: 3,
+                  p: 2,
+                  background: "linear-gradient(to right top, #F1D900, #fff176)",
+                  borderRadius: "4px",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "center",
+                  minHeight: "80px",
+                }}
+              >
+                <Typography
+                  variant="subtitle2"
+                  sx={{ mb: 0.5, fontWeight: 600, fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.7)" }}
+                >
+                  Gesamtkosten
+                </Typography>
+                <Typography
+                  variant="h4"
+                  component="p"
+                  color="common.black"
+                  fontWeight="bold"
+                >
+                  CHF {formatCurrency(totalCost)}
+                </Typography>
+              </Box>
+            )}
 
             {/* Data persistence section */}
             <Box sx={{ mt: 2, mb: 2 }}>
@@ -829,7 +853,11 @@ const MainPage = () => {
 
             <div className="flex flex-col mt-auto">
               <div>
-                <Typography variant="subtitle1" className="font-bold mb-2" color="primary">
+              <Typography
+                variant="subtitle1"
+                className="font-bold mb-2"
+                color="primary"
+              >
                   Anleitung
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
@@ -837,12 +865,18 @@ const MainPage = () => {
                   {Instructions.map((step) => (
                     <Step key={step.label} active>
                       <StepLabel>
-                        <span className="leading-tight text-primary font-bold" style={{ color: "#0D0599" }}>
+                      <span
+                        className="leading-tight text-primary font-bold"
+                        style={{ color: "#0D0599" }}
+                      >
                           {step.label}
                         </span>
                       </StepLabel>
                       <div className="ml-8 -mt-2">
-                        <span className="text-sm leading-none" style={{ color: "#0D0599" }}>
+                      <span
+                        className="text-sm leading-none"
+                        style={{ color: "#0D0599" }}
+                      >
                           {step.description}
                         </span>
                       </div>
@@ -855,7 +889,7 @@ const MainPage = () => {
         </div>
 
         {/* Main area */}
-        <div className="flex-1 w-3/4 flex flex-col overflow-y-auto">
+      <div className="flex-1 flex flex-col overflow-y-auto">
           <div className="flex-grow px-10 pt-4 pb-10 flex flex-col">
             <Box
               sx={{
@@ -912,7 +946,7 @@ const MainPage = () => {
               stats={ebkpStats}
               kennwerte={kennwerte}
               onKennwertChange={(code: string, value: number) => {
-                console.log(`Updating kennwert for ${code}: ${value}`);
+                logger.debug(`Updating kennwert for ${code}: ${value}`);
                 setKennwerte((prev) => ({ ...prev, [code]: value }))
               }}
               onQuantityTypeChange={handleQuantityTypeChange}
@@ -923,7 +957,6 @@ const MainPage = () => {
 
           </div>
         </div>
-      </Box>
       
       <PreviewModal
         open={previewModalOpen}

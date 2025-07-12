@@ -1,31 +1,32 @@
-const { MongoClient, ObjectId } = require("mongodb");
-const dotenv = require("dotenv");
+import { MongoClient, ObjectId, Db, Collection, InsertOneResult, UpdateResult, DeleteResult } from "mongodb";
+import logger from './logger';
+import { config } from './config';
+import {
+  ElementData,
+  QtoElement,
+  CostResult,
+  CostData,
+  CostElement,
+  CostSummary,
+  Project,
+  Kennwerte,
+  EnhancedCostItem,
+  CostDataKafka,
+  KafkaMetadata,
+  ProjectResponse,
+  CostElementsResponse,
+  CostElementsByEbkpResponse,
+  SaveCostDataBatchResult
+} from './types';
 
-// Ensure environment variables are loaded
-dotenv.config();
+// Use the MongoDB URI from config
+const mongoUri = config.mongodb.uri;
+const MONGODB_DATABASE = config.mongodb.costDatabase;
+const MONGODB_QTO_DATABASE = config.mongodb.qtoDatabase;
 
-// Configuration - Replace with environment variables in production
-const MONGODB_HOST = process.env.MONGODB_HOST || "mongodb";
-const MONGODB_PORT = process.env.MONGODB_PORT || "27017";
-const MONGODB_COST_USER = process.env.MONGODB_COST_USER;
-const MONGODB_COST_PASSWORD = process.env.MONGODB_COST_PASSWORD;
-const MONGODB_DATABASE = process.env.MONGODB_DATABASE || "cost"; // Cost DB
-const MONGODB_QTO_DATABASE = process.env.MONGODB_QTO_DATABASE || "qto"; // QTO DB
-
-if (!MONGODB_COST_USER || !MONGODB_COST_PASSWORD) {
-  console.error(
-    "ERROR: MONGODB_COST_USER or MONGODB_COST_PASSWORD environment variables are not set. Cost service DB operations will fail."
-  );
-  // Decide if you want to throw an error or try to continue without auth (not recommended)
-  // throw new Error("Missing MongoDB credentials for cost service");
-}
-
-// Construct the connection URI using specific service credentials
-const mongoUri = `mongodb://${MONGODB_COST_USER}:${MONGODB_COST_PASSWORD}@${MONGODB_HOST}:${MONGODB_PORT}/${MONGODB_DATABASE}?authSource=admin`;
-
-let client = null;
-let costDb = null;
-let qtoDb = null;
+let client: MongoClient | null = null;
+let costDb: Db | null = null;
+let qtoDb: Db | null = null;
 let connectionRetries = 0;
 const MAX_RETRIES = parseInt(process.env.MONGODB_CONNECT_MAX_RETRIES || "5");
 const RETRY_DELAY_MS = 3000; // Wait 3 seconds between retries
@@ -33,67 +34,54 @@ const RETRY_DELAY_MS = 3000; // Wait 3 seconds between retries
 /**
  * Connect to MongoDB and initialize database references
  */
-async function connectToMongoDB() {
+export async function connectToMongoDB(): Promise<void> {
   if (client) {
-    // Already connected
-    return { client, costDb, qtoDb };
-  }
-
-  let retries = 0;
-
-  while (retries < MAX_RETRIES) {
-    let tempClient = null;
     try {
-      tempClient = new MongoClient(mongoUri, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-        serverSelectionTimeoutMS: 5000,
-        connectTimeoutMS: 10000,
-      });
-
-      await tempClient.connect();
-
-      // Assign to global variables upon successful connection
-      client = tempClient;
-      costDb = client.db(MONGODB_DATABASE);
-      qtoDb = client.db(MONGODB_QTO_DATABASE);
-
-      await initializeCollections();
-      return { client, costDb, qtoDb }; // Success: exit loop and return
-    } catch (error) {
-      console.error(
-        `MongoDB connection attempt ${retries + 1} failed:`,
-        error.message // Log only the error message for brevity
-      );
-      retries++;
-      if (tempClient) {
-        await tempClient.close(); // Ensure temporary client is closed on error
-      }
-
-      if (retries < MAX_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-      } else {
-        console.error("Max MongoDB connection retries reached.");
-        // Reset global client state if all retries fail
-        client = null;
-        costDb = null;
-        qtoDb = null;
-        // Rethrow the last error after max retries
-        throw new Error(
-          `Failed to connect to MongoDB after ${MAX_RETRIES} attempts: ${error.message}`
-        );
-      }
+      // Test if the client is still connected
+      await client.db("admin").command({ ping: 1 });
+      return;
+    } catch {
+      // Connection is dead, proceed with reconnection
+      client = null;
     }
   }
-  // Should not be reached if MAX_RETRIES > 0, but satisfies TS compiler
-  throw new Error("MongoDB connection failed unexpectedly after retry loop.");
+
+  try {
+    client = new MongoClient(mongoUri, {
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+
+    await client.connect();
+    
+    // Initialize database references
+    costDb = client.db(MONGODB_DATABASE);
+    qtoDb = client.db(MONGODB_QTO_DATABASE);
+    
+    logger.info(
+      `Connected to MongoDB at ${mongoUri.split("@")[1] || mongoUri}`
+    );
+  } catch (error) {
+    logger.error(
+      `Failed to connect to MongoDB at ${
+        mongoUri.split("@")[1] || mongoUri
+      }:`,
+      error
+    );
+    throw error;
+  }
 }
 
 /**
  * Initialize collections and create indexes
  */
-async function initializeCollections() {
+export async function initializeCollections(): Promise<void> {
   try {
+    if (!costDb || !qtoDb) {
+      throw new Error("Database connections not initialized");
+    }
+
     const costCollectionNames = await costDb.listCollections().toArray();
     const qtoCollectionNames = await qtoDb.listCollections().toArray();
 
@@ -118,18 +106,20 @@ async function initializeCollections() {
     if (!costCollectionNames.some((c) => c.name === "costElements")) {
       await costDb.createCollection("costElements");
     }
-  } catch (error) {}
+  } catch (error) {
+    logger.error("Error initializing collections:", error);
+  }
 }
 
 /**
  * Close the MongoDB connection
  */
-async function closeMongoDB() {
+export async function closeMongoDB(): Promise<void> {
   if (client) {
     try {
       await client.close();
     } catch (error) {
-      console.error("Error closing MongoDB connection:", error);
+      logger.error("Error closing MongoDB connection:", error);
     } finally {
       client = null;
       costDb = null;
@@ -141,15 +131,15 @@ async function closeMongoDB() {
 /**
  * Ensure the connection is established before any operation
  */
-async function ensureConnection() {
+export async function ensureConnection(): Promise<{ client: MongoClient; costDb: Db; qtoDb: Db }> {
   if (!client) {
     await connectToMongoDB();
   } else {
     try {
       // Test the connection
       await client.db("admin").command({ ping: 1 });
-    } catch (error) {
-      console.error(
+    } catch (error: any) {
+      logger.error(
         "MongoDB connection check failed, attempting to reconnect:",
         error.message
       );
@@ -158,9 +148,9 @@ async function ensureConnection() {
       // Try to reconnect using the function with retry logic
       try {
         await connectToMongoDB();
-      } catch (reconnectError) {
+      } catch (reconnectError: any) {
         // If reconnection (with retries) fails, throw a specific error
-        console.error(
+        logger.error(
           "Failed to reconnect to MongoDB after retries:",
           reconnectError
         );
@@ -171,6 +161,14 @@ async function ensureConnection() {
     }
   }
 
+  // Initialize database references if they're null
+  if (!costDb || !qtoDb || !client) {
+    throw new Error("Failed to initialize database connections");
+  }
+  
+  costDb = client.db(MONGODB_DATABASE);
+  qtoDb = client.db(MONGODB_QTO_DATABASE);
+  
   // Return the database references if connection is successful
   return {
     client,
@@ -182,10 +180,14 @@ async function ensureConnection() {
 /**
  * Save cost data for an element
  */
-async function saveCostData(elementData, costResult) {
+export async function saveCostData(elementData: ElementData, costResult: CostResult): Promise<{ elementId: ObjectId; projectId: ObjectId; result: InsertOneResult<CostData> }> {
   await ensureConnection();
 
   try {
+    if (!costDb || !qtoDb) {
+      throw new Error("Database connections not initialized");
+    }
+
     // Generate new ObjectIds if not provided
     const elementId = elementData._id
       ? new ObjectId(elementData._id)
@@ -222,7 +224,7 @@ async function saveCostData(elementData, costResult) {
     const costItemId = new ObjectId();
 
     // Now save the cost data to the cost database - this comes directly from input
-    const costData = {
+    const costData: CostData = {
       _id: costItemId,
       project_id: projectId,
       ebkp_code: elementData.ebkp_code, // Store the EBKP code
@@ -242,11 +244,11 @@ async function saveCostData(elementData, costResult) {
     };
 
     // Insert the cost data as a new document instead of updating
-    const result = await costDb.collection("costData").insertOne(costData);
+    const result = await costDb.collection<CostData>("costData").insertOne(costData);
 
     // Save to costElements collection
     // First, get the full QTO element data to ensure we have all details
-    const qtoElement = await qtoDb.collection("elements").findOne({
+    const qtoElement = await qtoDb.collection<QtoElement>("elements").findOne({
       _id: elementId,
     });
 
@@ -255,14 +257,14 @@ async function saveCostData(elementData, costResult) {
       const elementArea =
         qtoElement.original_area ||
         qtoElement.quantity ||
-        qtoElement.properties?.area ||
+        (qtoElement.properties?.area as number) ||
         elementData.area ||
         0;
-      const elementTotalCost = (costResult.unitCost || 0) * elementArea;
+      const elementTotalCost = (costResult.unitCost || 0) * (typeof elementArea === 'number' ? elementArea : 0);
 
       // Create a document that preserves the QTO element structure exactly
       // but adds cost data
-      const costElementDoc = {
+      const costElementDoc: CostElement = {
         // Use the QTO element as the base
         ...qtoElement,
 
@@ -307,9 +309,9 @@ async function saveCostData(elementData, costResult) {
         .deleteMany({ qto_element_id: elementId });
 
       // Then insert the new costElement document
-      await costDb.collection("costElements").insertOne(costElementDoc);
+      await costDb.collection<CostElement>("costElements").insertOne(costElementDoc);
     } else {
-      console.log(
+      logger.warn(
         `QTO element with ID ${elementId} not found, skipping costElements update`
       );
     }
@@ -319,7 +321,7 @@ async function saveCostData(elementData, costResult) {
 
     return { elementId, projectId, result };
   } catch (error) {
-    console.error("Error saving cost data:", error);
+    logger.error("Error saving cost data:", error);
     throw error; // Throw the error to handle it in the calling function
   }
 }
@@ -327,15 +329,18 @@ async function saveCostData(elementData, costResult) {
 /**
  * Get element data from QTO database
  */
-async function getQtoElement(elementId) {
+export async function getQtoElement(elementId: string): Promise<QtoElement | null> {
   await ensureConnection();
 
   try {
-    return await qtoDb.collection("elements").findOne({
+    if (!qtoDb) {
+      throw new Error("QTO database not initialized");
+    }
+    return await qtoDb.collection<QtoElement>("elements").findOne({
       _id: new ObjectId(elementId),
     });
   } catch (error) {
-    console.error("Error getting QTO element:", error);
+    logger.error("Error getting QTO element:", error);
     return null;
   }
 }
@@ -343,12 +348,15 @@ async function getQtoElement(elementId) {
 /**
  * Get elements by project ID
  */
-async function getElementsByProject(projectId) {
+export async function getElementsByProject(projectId: string): Promise<QtoElement[]> {
   await ensureConnection();
 
   try {
+    if (!qtoDb) {
+      throw new Error("QTO database not initialized");
+    }
     const allElements = await qtoDb
-      .collection("elements")
+      .collection<QtoElement>("elements")
       .find({
         project_id: new ObjectId(projectId),
         status: "active", // Only include elements with active status
@@ -362,14 +370,14 @@ async function getElementsByProject(projectId) {
     });
 
     if (pendingCount > 0) {
-      console.log(
+      logger.info(
         `Skipped ${pendingCount} QTO elements with pending status for project ${projectId}`
       );
     }
 
     return allElements;
   } catch (error) {
-    console.error("Error getting elements by project:", error);
+    logger.error("Error getting elements by project:", error);
     return [];
   }
 }
@@ -377,15 +385,18 @@ async function getElementsByProject(projectId) {
 /**
  * Get cost data for an element
  */
-async function getCostDataForElement(elementId) {
+export async function getCostDataForElement(elementId: string): Promise<CostData | null> {
   await ensureConnection();
 
   try {
-    return await costDb.collection("costData").findOne({
+    if (!costDb) {
+      throw new Error("Cost database not initialized");
+    }
+    return await costDb.collection<CostData>("costData").findOne({
       element_id: new ObjectId(elementId),
     });
   } catch (error) {
-    console.error("Error getting cost data for element:", error);
+    logger.error("Error getting cost data for element:", error);
     return null;
   }
 }
@@ -393,24 +404,28 @@ async function getCostDataForElement(elementId) {
 /**
  * Update project cost summary
  */
-async function updateProjectCostSummary(projectId) {
+export async function updateProjectCostSummary(projectId: ObjectId | string): Promise<CostSummary | { error: string }> {
   await ensureConnection();
 
   try {
+    if (!costDb) {
+      throw new Error("Cost database not initialized");
+    }
+
     // Handle ObjectId conversion safely
-    let projectObjId;
+    let projectObjId: ObjectId;
     try {
       projectObjId =
         typeof projectId === "string" ? new ObjectId(projectId) : projectId;
     } catch (error) {
-      console.error(`Invalid project ID format: ${projectId}`, error);
+      logger.error(`Invalid project ID format: ${projectId}`, error);
       return { error: `Invalid project ID format: ${projectId}` };
     }
 
     // Get the costElements - these should be the single source of truth
     // This avoids double-counting that might happen when combining costElements and costData
     const costElements = await costDb
-      .collection("costElements")
+      .collection<CostElement>("costElements")
       .find({
         project_id: projectObjId,
       })
@@ -422,7 +437,7 @@ async function updateProjectCostSummary(projectId) {
     });
 
     if (costElements.length === 0) {
-      return {
+      const summary: CostSummary = {
         project_id: projectObjId,
         elements_count: 0,
         cost_data_count: costDataCount,
@@ -431,10 +446,11 @@ async function updateProjectCostSummary(projectId) {
         created_at: new Date(),
         updated_at: new Date(),
       };
+      return summary;
     }
 
     // Create a map of element IDs to prevent double counting in hierarchical elements
-    const processedElementIds = new Set();
+    const processedElementIds = new Set<string>();
 
     // Calculate total from costElements - only count each element once
     // This mimics what the UI does in CostTableRow.tsx
@@ -463,7 +479,7 @@ async function updateProjectCostSummary(projectId) {
       .catch((_) => 0);
 
     // Create simplified summary document with only the requested fields
-    const summary = {
+    const summary: CostSummary = {
       project_id: projectObjId,
       elements_count: costElements.length,
       cost_data_count: costDataCount,
@@ -474,7 +490,7 @@ async function updateProjectCostSummary(projectId) {
     };
 
     // Log the summary for debugging
-    console.log(`Project cost summary for ${projectId}:`, {
+    logger.info(`Project cost summary for ${projectId}:`, {
       elements_count: summary.elements_count,
       cost_data_count: summary.cost_data_count,
       total_from_elements: summary.total_from_elements,
@@ -482,7 +498,7 @@ async function updateProjectCostSummary(projectId) {
     });
 
     const result = await costDb
-      .collection("costSummaries")
+      .collection<CostSummary>("costSummaries")
       .updateOne(
         { project_id: projectObjId },
         { $set: summary },
@@ -490,8 +506,8 @@ async function updateProjectCostSummary(projectId) {
       );
 
     return summary;
-  } catch (error) {
-    console.error("Error updating project cost summary:", error);
+  } catch (error: any) {
+    logger.error("Error updating project cost summary:", error);
     return { error: `Failed to update project summary: ${error.message}` };
   }
 }
@@ -499,12 +515,16 @@ async function updateProjectCostSummary(projectId) {
 /**
  * Get all elements for a project
  */
-async function getAllElementsForProject(projectName) {
+export async function getAllElementsForProject(projectName: string): Promise<any[]> {
   await ensureConnection();
 
   try {
-    console.log(`Looking up project elements by name: ${projectName}`);
-    let elements = [];
+    if (!qtoDb || !costDb) {
+      throw new Error("Database connections not initialized");
+    }
+
+    logger.info(`Looking up project elements by name: ${projectName}`);
+    let elements: any[] = [];
 
     // First, check if qtoDb has a projects collection where we can find the project ID
     try {
@@ -514,14 +534,14 @@ async function getAllElementsForProject(projectName) {
 
       if (projectsCollection.length > 0) {
         // Projects collection exists in QTO database
-        const project = await qtoDb.collection("projects").findOne({
+        const project = await qtoDb.collection<Project>("projects").findOne({
           name: { $regex: new RegExp(`^${projectName}$`, "i") },
         });
 
         if (project) {
           // Look up elements using the project ID
           elements = await qtoDb
-            .collection("elements")
+            .collection<QtoElement>("elements")
             .find({
               project_id: project._id,
               status: "active", // Only include elements with active status
@@ -537,15 +557,14 @@ async function getAllElementsForProject(projectName) {
             });
 
           if (pendingCount > 0) {
-            console.log(
+            logger.info(
               `Skipped ${pendingCount} QTO elements with pending status for project ${projectName}`
             );
           }
         }
-      } else {
       }
-    } catch (error) {
-      console.warn(
+    } catch (error: any) {
+      logger.warn(
         `Error checking for projects collection in QTO database: ${error.message}`
       );
     }
@@ -584,7 +603,7 @@ async function getAllElementsForProject(projectName) {
               break;
             }
           } catch (err) {
-            console.error(
+            logger.error(
               `Error with search query ${JSON.stringify(searchQuery)}:`,
               err
             );
@@ -593,34 +612,26 @@ async function getAllElementsForProject(projectName) {
       }
     }
 
-    // If still no elements, check all collections in QTO database for elements related to this project
+    // If still no elements, return empty array
     if (elements.length === 0) {
-      // Get list of all collections in QTO database
-      const collections = await qtoDb.listCollections().toArray();
-
-      // Sample a document from each collection to understand their structure
-      for (const collection of collections) {
-        const sampleDoc = await qtoDb.collection(collection.name).findOne({});
-        if (sampleDoc) {
-        }
-      }
-
       return [];
     }
 
     // Get cost data for these elements
     const elementIds = elements.map((e) => e._id);
     const costData = await costDb
-      .collection("costData")
+      .collection<CostData>("costData")
       .find({
         element_id: { $in: elementIds },
       })
       .toArray();
 
     // Create a map of cost data by element ID for quick lookup
-    const costDataMap = {};
+    const costDataMap: Record<string, CostData> = {};
     costData.forEach((cost) => {
-      costDataMap[cost.element_id.toString()] = cost;
+      if (cost.element_id) {
+        costDataMap[cost.element_id.toString()] = cost;
+      }
     });
 
     // Enhance elements with cost data
@@ -657,7 +668,7 @@ async function getAllElementsForProject(projectName) {
 
     return enhancedElements;
   } catch (error) {
-    console.error("Error getting all elements for project:", error);
+    logger.error("Error getting all elements for project:", error);
     return [];
   }
 }
@@ -666,17 +677,21 @@ async function getAllElementsForProject(projectName) {
  * Get cost elements by project ID
  * This returns elements from the costElements collection which combines QTO and cost data
  */
-async function getCostElementsByProject(projectName) {
+export async function getCostElementsByProject(projectName: string): Promise<CostElementsResponse> {
   await ensureConnection();
 
   try {
+    if (!qtoDb || !costDb) {
+      throw new Error("Database connections not initialized");
+    }
+
     // First find the project ID
-    const project = await qtoDb.collection("projects").findOne({
+    const project = await qtoDb.collection<Project>("projects").findOne({
       name: { $regex: new RegExp(`^${projectName}$`, "i") },
     });
 
     if (!project) {
-      console.warn(`Project not found with name: ${projectName}`);
+      logger.warn(`Project not found with name: ${projectName}`);
       return {
         elements: [],
         summary: {
@@ -694,24 +709,16 @@ async function getCostElementsByProject(projectName) {
 
     // Get cost elements for this project
     const costElements = await costDb
-      .collection("costElements")
+      .collection<CostElement>("costElements")
       .find({
         project_id: projectId,
         qto_status: "active", // Only include cost elements for active QTO elements
       })
       .toArray();
 
-    // Check if we have any cost elements for pending QTO elements
-    const pendingElementsCount = await costDb
-      .collection("costElements")
-      .countDocuments({
-        project_id: projectId,
-        qto_status: "pending",
-      });
-
     // Compute summary statistics
     // Look for EBKP code in properties.classification.id or properties.ebkph
-    const ebkpCodes = new Set();
+    const ebkpCodes = new Set<string>();
     costElements.forEach((element) => {
       let code = null;
       if (element.properties?.classification?.id) {
@@ -726,7 +733,7 @@ async function getCostElementsByProject(projectName) {
 
     // Calculate total area using quantity or original_area
     const totalArea = costElements.reduce(
-      (sum, element) => sum + (element.original_area || element.quantity || 0),
+      (sum, element) => sum + (element.original_area || (typeof element.quantity === 'number' ? element.quantity : 0) || 0),
       0
     );
 
@@ -748,7 +755,7 @@ async function getCostElementsByProject(projectName) {
       },
     };
   } catch (error) {
-    console.error("Error getting cost elements by project:", error);
+    logger.error("Error getting cost elements by project:", error);
     return {
       elements: [],
       summary: {
@@ -767,13 +774,17 @@ async function getCostElementsByProject(projectName) {
  * Get cost elements by EBKP code
  * This returns elements from the costElements collection filtered by EBKP code
  */
-async function getCostElementsByEbkpCode(ebkpCode) {
+export async function getCostElementsByEbkpCode(ebkpCode: string): Promise<CostElementsByEbkpResponse> {
   await ensureConnection();
 
   try {
+    if (!costDb || !qtoDb) {
+      throw new Error("Database connections not initialized");
+    }
+
     // Find elements where either properties.classification.id or properties.ebkph match
     const costElements = await costDb
-      .collection("costElements")
+      .collection<CostElement>("costElements")
       .find({
         $or: [
           { "properties.classification.id": ebkpCode },
@@ -786,11 +797,11 @@ async function getCostElementsByEbkpCode(ebkpCode) {
     const projectIds = new Set(
       costElements.map((element) => element.project_id.toString())
     );
-    const projects = [];
+    const projects: Array<{ id: string; name: string }> = [];
 
     for (const projectId of projectIds) {
       try {
-        const project = await qtoDb.collection("projects").findOne({
+        const project = await qtoDb.collection<Project>("projects").findOne({
           _id: new ObjectId(projectId),
         });
         if (project) {
@@ -800,13 +811,13 @@ async function getCostElementsByEbkpCode(ebkpCode) {
           });
         }
       } catch (error) {
-        console.warn(`Could not find project with ID ${projectId}`);
+        logger.warn(`Could not find project with ID ${projectId}`);
       }
     }
 
     // Calculate total area using quantity or original_area
     const totalArea = costElements.reduce(
-      (sum, element) => sum + (element.original_area || element.quantity || 0),
+      (sum, element) => sum + (element.original_area || (typeof element.quantity === 'number' ? element.quantity : 0) || 0),
       0
     );
 
@@ -837,7 +848,7 @@ async function getCostElementsByEbkpCode(ebkpCode) {
       },
     };
   } catch (error) {
-    console.error("Error getting cost elements by EBKP code:", error);
+    logger.error("Error getting cost elements by EBKP code:", error);
     return {
       elements: [],
       summary: {
@@ -855,7 +866,7 @@ async function getCostElementsByEbkpCode(ebkpCode) {
 
 // Helper function to normalize eBKP codes for better matching
 // DUPLICATED from server.js to avoid circular dependency
-function normalizeEbkpCode(code) {
+function normalizeEbkpCode(code: string | null | undefined): string | null | undefined {
   if (!code) return code;
 
   // Convert to uppercase for consistent matching
@@ -883,23 +894,17 @@ function normalizeEbkpCode(code) {
 /**
  * Save a batch of cost data (Refactored Logic)
  * Creates costElements entries based on active QTO elements and existing costData.
- * @param {Array} costItems - EnhancedCostItem[] from PreviewModal, already BIM-mapped
- * @param {Array} allExcelItems - Pass the full original (but processed) Excel items list
- * @param {string} projectName - Name of the project
- * @param {Function} sendKafkaMessage - Optional callback to send Kafka messages
- * @returns {Promise<Object>} Result with counts
  */
-async function saveCostDataBatch(
-  costItems,
-  allExcelItems,
-  projectName,
-  sendKafkaMessage = null
-) {
+export async function saveCostDataBatch(
+  costItems: EnhancedCostItem[],
+  allExcelItems: EnhancedCostItem[],
+  projectName: string,
+  sendKafkaMessage?: ((elements: CostDataKafka[], metadata: KafkaMetadata) => Promise<{ success: boolean; count: number }>) | null
+): Promise<SaveCostDataBatchResult> {
   try {
-    const { costDb: costDatabase, qtoDb: qtoDatabase } =
-      await ensureConnection();
+    const { costDb: costDatabase, qtoDb: qtoDatabase } = await ensureConnection();
 
-    const qtoProject = await qtoDatabase.collection("projects").findOne(
+    const qtoProject = await qtoDatabase.collection<Project>("projects").findOne(
       { name: { $regex: new RegExp(`^${projectName}$`, "i") } },
       {
         projection: {
@@ -912,18 +917,27 @@ async function saveCostDataBatch(
       }
     );
     if (!qtoProject) {
-      console.warn(
+      logger.warn(
         `Project ${projectName} not found. Cannot update cost elements.`
       );
-      return { insertedCount: 0, message: "Project not found" };
+      return { 
+        insertedCount: 0, 
+        deletedCostElements: 0,
+        processedBimElements: 0,
+        skippedBimElements: 0,
+        processedExcelOnlyItems: 0,
+        insertedCostElements: 0,
+        projectId: new ObjectId(),
+        kafkaSent: 0
+      } as SaveCostDataBatchResult;
     }
     const projectId = qtoProject._id;
 
     // Extract required metadata for Kafka
     const originalTimestamp = qtoProject.metadata?.upload_timestamp;
-    let kafkaMetadata = null;
+    let kafkaMetadata: KafkaMetadata | null = null;
     if (!originalTimestamp) {
-      console.error(
+      logger.error(
         `CRITICAL: Original upload_timestamp missing in metadata for project ${projectName} (ID: ${projectId}). Kafka messages for cost elements might be inaccurate.`
       );
       // Create a fallback kafkaMetadata to allow processing, but log critical warning
@@ -934,7 +948,7 @@ async function saveCostDataBatch(
           qtoProject.updated_at?.toISOString() || new Date().toISOString(), // Fallback timestamp
         fileId: qtoProject.metadata?.file_id || projectId.toString(),
       };
-      console.warn(
+      logger.warn(
         "Using fallback Kafka metadata due to missing upload_timestamp:",
         JSON.stringify(kafkaMetadata)
       );
@@ -953,33 +967,42 @@ async function saveCostDataBatch(
       .deleteMany({ project_id: projectId });
 
     // 3. Create lookup map for BIM-matched costItems
-    const mappedCostItemsLookup = new Map();
+    const mappedCostItemsLookup = new Map<string, EnhancedCostItem>();
     (costItems || []).forEach((item) => {
-      if (item.ebkp)
-        mappedCostItemsLookup.set(normalizeEbkpCode(item.ebkp), item);
+      if (item.ebkp) {
+        const normalized = normalizeEbkpCode(item.ebkp);
+        if (normalized) {
+          mappedCostItemsLookup.set(normalized, item);
+        }
+      }
     });
 
-    // 4. Fetch active QTO elements
+    // 4. Fetch only active QTO elements for the project
     const activeQtoElements = await qtoDatabase
-      .collection("elements")
+      .collection<QtoElement>("elements")
       .find({ project_id: projectId, status: "active" })
       .toArray();
 
     // 5. Fetch costData map
-    const costDataMap = new Map();
+    const costDataMap = new Map<string, CostData>();
     const projectCostData = await costDatabase
-      .collection("costData")
+      .collection<CostData>("costData")
       .find({ project_id: projectId })
       .toArray();
     projectCostData.forEach((doc) => {
-      if (doc.ebkp_code) costDataMap.set(normalizeEbkpCode(doc.ebkp_code), doc);
+      if (doc.ebkp_code) {
+        const normalized = normalizeEbkpCode(doc.ebkp_code);
+        if (normalized) {
+          costDataMap.set(normalized, doc);
+        }
+      }
     });
 
     // 6. Process QTO elements (BIM-derived elements)
-    const costElementsToSave = [];
-    const elementsForKafka = [];
-    const ebkpCodesSuccessfullyAddedFromBim = new Set(); // ** NEW: Track EBKPs with actual cost from BIM **
-    const processedKafkaIds = new Set(); // Track IDs added to Kafka (can be QTO ID or costData ID)
+    const costElementsToSave: CostElement[] = [];
+    const elementsForKafka: CostDataKafka[] = [];
+    const ebkpCodesSuccessfullyAddedFromBim = new Set<string>(); // Track EBKPs with actual cost from BIM
+    const processedKafkaIds = new Set<string>(); // Track IDs added to Kafka (can be QTO ID or costData ID)
     let processedBimCount = 0;
     let skippedBimCount = 0;
 
@@ -1001,46 +1024,47 @@ async function saveCostDataBatch(
         // Calculate cost based on QTO element quantity and costData unit cost
         let elementQuantity = 0;
         // Prioritize specific quantity types if available
-        if (
-          qtoElement.quantity?.type === "Area" &&
-          qtoElement.quantity?.value !== undefined
-        )
-          elementQuantity = qtoElement.quantity.value;
-        else if (qtoElement.area !== undefined)
-          elementQuantity = qtoElement.area; // Fallback to area
-        else if (qtoElement.quantity?.value !== undefined)
-          elementQuantity = qtoElement.quantity.value; // General quantity value
-        else if (typeof qtoElement.quantity === "number")
+        const qty = qtoElement.quantity;
+        if (typeof qty === 'object' && qty !== null && 'type' in qty && 'value' in qty) {
+          if (qty.type === "Area" && qty.value !== undefined) {
+            elementQuantity = qty.value;
+          } else if (qty.value !== undefined) {
+            elementQuantity = qty.value;
+          }
+        } else if (qtoElement.area !== undefined) {
+          elementQuantity = qtoElement.area;
+        } else if (typeof qtoElement.quantity === "number") {
           elementQuantity = qtoElement.quantity;
-        else if (qtoElement.volume !== undefined)
-          elementQuantity = qtoElement.volume; // Further fallbacks
-        else if (qtoElement.length !== undefined)
+        } else if (qtoElement.volume !== undefined) {
+          elementQuantity = qtoElement.volume;
+        } else if (qtoElement.length !== undefined) {
           elementQuantity = qtoElement.length;
+        }
 
         const unitCost = costDataForElement.unit_cost;
         const elementTotalCost = unitCost * elementQuantity;
 
-        // ** Only add to Kafka and mark EBKP if cost is > 0 **
+        // Only add to Kafka and mark EBKP if cost is > 0
         if (elementTotalCost > 0) {
-          ebkpCodesSuccessfullyAddedFromBim.add(normalizedQtoEbkp); // ** Mark EBKP as successfully added **
+          ebkpCodesSuccessfullyAddedFromBim.add(normalizedQtoEbkp);
 
           // Create the costElement document for saving to DB
-          const costElementDoc = {
-            _id: new ObjectId(),
+          const costElementDoc: CostElement = {
             ...qtoElement,
+            _id: new ObjectId(), // Override the _id from qtoElement
             qto_element_id: qtoElement._id,
             qto_status: qtoElement.status || "active",
             project_id: projectId,
             unit_cost: unitCost,
             total_cost: elementTotalCost,
             currency: "CHF",
-            ebkp_code: qtoElementEbkpCode,
+            ebkp_code: qtoElementEbkpCode || undefined,
             properties: {
               ...qtoElement.properties,
               cost_data: {
                 unit_cost: unitCost,
                 total_cost: elementTotalCost,
-                source: "qto+costdata", // Indicate source
+                source: "qto+costdata",
                 timestamp: new Date(),
               },
             },
@@ -1056,9 +1080,7 @@ async function saveCostDataBatch(
             qtoElement.global_id || qtoElement._id.toString();
           if (!processedKafkaIds.has(kafkaMessageElementId)) {
             elementsForKafka.push({
-              id: kafkaMessageElementId, // Use global_id or fallback to _id for the Kafka message
-              project: projectName,
-              filename: kafkaMetadata.filename,
+              id: kafkaMessageElementId,
               cost: elementTotalCost,
               cost_unit: unitCost,
             });
@@ -1082,8 +1104,8 @@ async function saveCostDataBatch(
 
     if (allExcelItems && Array.isArray(allExcelItems)) {
       // Define getAllItemsFlat locally if not imported
-      const getAllItemsFlat = (items) => {
-        let r = [];
+      const getAllItemsFlat = (items: EnhancedCostItem[]): EnhancedCostItem[] => {
+        let r: EnhancedCostItem[] = [];
         items.forEach((i) => {
           r.push(i);
           if (i.children?.length) r = r.concat(getAllItemsFlat(i.children));
@@ -1101,6 +1123,7 @@ async function saveCostDataBatch(
         if (!excelEbkp) continue;
 
         const normalizedExcelEbkp = normalizeEbkpCode(excelEbkp);
+        if (!normalizedExcelEbkp) continue;
 
         if (ebkpCodesSuccessfullyAddedFromBim.has(normalizedExcelEbkp)) {
           continue;
@@ -1108,18 +1131,18 @@ async function saveCostDataBatch(
 
         // Get cost directly from Excel leaf item
         const itemCostValue =
-          parseFloat(excelItem.chf || excelItem.totalChf || 0) || 0;
+          parseFloat(String(excelItem.chf || excelItem.totalChf || 0)) || 0;
         if (itemCostValue <= 0) continue; // Skip zero-cost leaves
 
         totalExcelCost += itemCostValue;
 
         // Find or Create corresponding costData entry for this leaf item
         let costDataDoc = costDataMap.get(normalizedExcelEbkp);
-        let costDataId;
+        let costDataId: string;
 
         if (!costDataDoc) {
           const newCostDataId = new ObjectId();
-          const newCostDataDoc = {
+          const newCostDataDoc: CostData = {
             _id: newCostDataId,
             project_id: projectId,
             ebkp_code: excelEbkp,
@@ -1127,8 +1150,11 @@ async function saveCostDataBatch(
             quantity: excelItem.menge || 1, // Use Excel Menge for leaves
             total_cost: itemCostValue,
             currency: "CHF",
+            calculation_date: new Date(),
+            calculation_method: "excel-import-leaf",
             metadata: {
               source: "excel-import-leaf",
+              ebkp_code: excelEbkp,
               timestamp: new Date(),
               original_data: {
                 is_parent: false, // It's a leaf node
@@ -1141,12 +1167,12 @@ async function saveCostDataBatch(
             updated_at: new Date(),
           };
           try {
-            await costDatabase.collection("costData").insertOne(newCostDataDoc);
+            await costDatabase.collection<CostData>("costData").insertOne(newCostDataDoc);
             costDataMap.set(normalizedExcelEbkp, newCostDataDoc);
             costDataDoc = newCostDataDoc;
             costDataId = newCostDataId.toString();
-          } catch (err) {
-            console.error(
+          } catch (err: any) {
+            logger.error(
               `Failed to create costData for Excel LEAF ${excelEbkp}: ${err.message}`
             );
             missingCostDataCount++;
@@ -1159,35 +1185,20 @@ async function saveCostDataBatch(
         // Add leaf Excel item to Kafka using costData ID
         if (costDataId && !processedKafkaIds.has(costDataId)) {
           elementsForKafka.push({
-            element_id: costDataId, // Use costData ID
-            id: costDataId, // Use costData ID
-            project: projectName,
-            filename: kafkaMetadata.filename,
-            cost: itemCostValue, // Cost from Excel leaf
+            id: costDataId,
+            cost: itemCostValue,
             cost_unit: costDataDoc.unit_cost || excelItem.kennwert || 0,
           });
-          processedKafkaIds.add(costDataId); // Track costData ID added to Kafka
+          processedKafkaIds.add(costDataId);
           processedExcelOnlyCount++;
-        } else if (costDataId) {
         }
       }
     }
 
-    const totalCostFromKafka = elementsForKafka.reduce(
-      (sum, elem) => sum + (elem.cost || 0),
-      0
-    );
-
-    // Log items with high costs to help identify missing items
-    const highCostItems = elementsForKafka
-      .filter((item) => item.cost > 100000)
-      .sort((a, b) => b.cost - a.cost)
-      .slice(0, 5);
-
     let insertResult = { insertedCount: 0 };
     if (costElementsToSave.length > 0) {
       insertResult = await costDatabase
-        .collection("costElements")
+        .collection<CostElement>("costElements")
         .insertMany(costElementsToSave, { ordered: false });
     }
 
@@ -1208,13 +1219,13 @@ async function saveCostDataBatch(
       kafkaSent: kafkaResult?.count || 0,
     };
   } catch (error) {
-    console.error("Error processing cost elements batch:", error);
+    logger.error("Error processing cost elements batch:", error);
     throw error;
   }
 }
 
 // Create a more lenient way of extracting EBKP from an element
-function getElementEbkpCode(element) {
+export function getElementEbkpCode(element: any): string | null {
   let ebkpCode = null;
 
   // 1. Check properties.classification.id
@@ -1238,14 +1249,27 @@ function getElementEbkpCode(element) {
 }
 
 /**
+ * Get the cost database instance
+ */
+export function getCostDb(): Db {
+  if (!costDb) {
+    throw new Error("Cost database not initialized. Call connectToMongoDB first.");
+  }
+  return costDb;
+}
+
+/**
  * Get all projects from QTO database
  */
-async function getAllProjects() {
+export async function getAllProjects(): Promise<ProjectResponse[]> {
   await ensureConnection();
 
   try {
+    if (!qtoDb) {
+      throw new Error("QTO database not initialized");
+    }
     const projects = await qtoDb
-      .collection("projects")
+      .collection<Project>("projects")
       .find({}, { projection: { _id: 1, name: 1 } })
       .toArray();
 
@@ -1257,24 +1281,54 @@ async function getAllProjects() {
 
     return formattedProjects;
   } catch (error) {
-    console.error("Error getting all projects:", error);
+    logger.error("Error getting all projects:", error);
     return [];
   }
 }
 
-module.exports = {
-  connectToMongoDB,
-  closeMongoDB,
-  saveCostData,
-  getQtoElement,
-  getElementsByProject,
-  getCostDataForElement,
-  updateProjectCostSummary,
-  getAllElementsForProject,
-  saveCostDataBatch,
-  getCostElementsByProject,
-  getCostElementsByEbkpCode,
-  getElementEbkpCode,
-  getAllProjects,
-  ObjectId,
-};
+/**
+ * Get the projects collection from QTO database
+ */
+export async function getProjectsCollection(): Promise<Collection<Project>> {
+  await ensureConnection();
+  if (!qtoDb) {
+    throw new Error("QTO database not initialized");
+  }
+  return qtoDb.collection<Project>("projects");
+}
+
+/**
+ * Get the elements collection from QTO database
+ */
+export async function getElementsCollection(): Promise<Collection<QtoElement>> {
+  await ensureConnection();
+  if (!qtoDb) {
+    throw new Error("QTO database not initialized");
+  }
+  return qtoDb.collection<QtoElement>("elements");
+}
+
+/**
+ * Get the kennwerte collection from cost database
+ */
+export async function getKennwerteCollection(): Promise<Collection<Kennwerte>> {
+  await ensureConnection();
+  if (!costDb) {
+    throw new Error("Cost database not initialized");
+  }
+  return costDb.collection<Kennwerte>("kennwerte");
+}
+
+/**
+ * Get the costElements collection from cost database
+ */
+export async function getCostElementsCollection(): Promise<Collection<CostElement>> {
+  await ensureConnection();
+  if (!costDb) {
+    throw new Error("Cost database not initialized");
+  }
+  return costDb.collection<CostElement>("costElements");
+}
+
+// Export ObjectId for external use
+export { ObjectId };

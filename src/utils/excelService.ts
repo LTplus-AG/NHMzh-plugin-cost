@@ -50,12 +50,19 @@ export class ExcelService {
     };
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     
+    // Create worksheet data
+    const wsData: Array<Array<string | number>> = [headers];
+    
     // Add data rows
     stats.forEach(stat => {
-      const kennwert = kennwerte[stat.code];
-      const row: any[] = [stat.code, kennwert !== undefined ? kennwert : ''];
-      worksheet.addRow(row);
+      const kennwert = kennwerte[stat.code] || 0;
+      const row: Array<string | number> = [stat.code, kennwert];
+      
+      wsData.push(row);
     });
+    
+    // Add data rows to worksheet
+    wsData.forEach(row => worksheet.addRow(row));
     
     // Auto-fit columns
     worksheet.columns.forEach(column => {

@@ -2,29 +2,24 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import logger from './utils/logger';
 
-// For local development only - render to DOM
-const rootElement = document.getElementById("root");
-if (rootElement) {
-  const root = ReactDOM.createRoot(rootElement);
+const mount = (el: HTMLElement) => {
+  const root = ReactDOM.createRoot(el);
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+};
 
-  // Wrap rendering in error boundary to catch any initialization errors
+const localRoot = document.getElementById("plugin-cost-root");
+if (localRoot) {
   try {
-    root.render(
-      <React.StrictMode>
-        <App />
-      </React.StrictMode>
-    );
+    mount(localRoot);
   } catch (error) {
-    console.error("Error rendering plugin:", error);
-    root.render(
-      <div style={{ color: "red", padding: "20px" }}>
-        Error loading plugin. Please check console for details.
-      </div>
-    );
+    logger.error("Error rendering plugin:", error);
   }
 }
 
-// Clean export for Module Federation
-// This is the component that will be imported by the host
-export default App;
+export { mount };

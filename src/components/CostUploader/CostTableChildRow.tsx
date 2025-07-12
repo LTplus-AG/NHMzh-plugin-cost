@@ -17,7 +17,7 @@ import { CostItem } from "./types";
 import { getColumnStyle, columnWidths } from "./styles";
 import { tableStyle } from "./styles";
 import CostTableGrandchildRow from "./CostTableGrandchildRow.tsx";
-import { useKafka } from "../../contexts/KafkaContext";
+import { useApi } from "../../contexts/ApiContext";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -68,7 +68,7 @@ const CostTableChildRow = ({
 
   // Get the Kafka context
   const { replaceEbkpPlaceholders, calculateUpdatedChf, formatTimestamp } =
-    useKafka();
+    useApi();
 
   // Update the hasQtoData function to check for IFC data
   const hasQtoData = (item: CostItem): boolean => {

@@ -27,6 +27,7 @@ import React, { useMemo, useState } from "react";
 import { MongoElement } from "../../types/common.types";
 import { CostEbkpGroup } from "../../types/cost.types";
 import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
+import logger from '../../utils/logger';
 
 interface CostEbkpGroupRowProps {
   group: CostEbkpGroup;
@@ -76,7 +77,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
       setToastSeverity('success');
       setShowToast(true);
     } catch (err) {
-      console.error('Failed to copy text: ', err);
+      logger.error('Failed to copy text: ', err);
       setToastMessage('Fehler beim Kopieren der GUID');
       setToastSeverity('error');
       setShowToast(true);
@@ -141,35 +142,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   const hasZeroQuantity = elementsWithZeroQuantity.length > 0;
   const elementsWithMissingQuantities = elementsWithZeroQuantity.length;
   
-  // Debug logging - only in development
-  if (process.env.NODE_ENV === 'development' && group.code === 'C01.03') {
-    console.log(`[CostEbkpGroupRow] DETAILED DEBUG for Group ${group.code}:`, {
-      selectedQuantity,
-      selectedQuantityType,
-      hasZeroQuantity,
-      elementsWithZeroQuantity: elementsWithZeroQuantity.length,
-      totalElements: group.elements.length,
-      availableQuantities: group.availableQuantities,
-      groupSelectedQuantityType: group.selectedQuantityType,
-      firstElement: group.elements[0] ? {
-        _id: group.elements[0]._id,
-        available_quantities: group.elements[0].available_quantities,
-        quantity: group.elements[0].quantity,
-        properties: group.elements[0].properties,
-        allKeys: Object.keys(group.elements[0])
-      } : null,
-      firstElementQuantityCheck: group.elements[0] ? {
-        area: group.elements[0].area,
-        volume: group.elements[0].volume,
-        length: group.elements[0].length,
-        selectedQuantityType,
-        selectedQuantityValue: getElementQuantityValue(group.elements[0], selectedQuantityType),
-        isZeroResult: isZeroQuantity(getElementQuantityValue(group.elements[0], selectedQuantityType))
-      } : null
-    });
-  }
-
-  // Memoize filtered and sorted elements for performance
+   // Memoize filtered and sorted elements for performance
   const processedElements = useMemo(() => {
     // Filter elements if showing only failing ones
     let filteredElements = showOnlyFailing 

@@ -5,6 +5,7 @@ export interface CostProjectMetadata {
   filename: string;
   upload_timestamp: string; // Corresponds to "Stand"
   element_count?: number;
+  project_id?: string; // MongoDB project ID
 }
 
 interface ProjectMetadataDisplayProps {

@@ -6,7 +6,10 @@ import React, {
   ReactNode,
   useCallback,
 } from "react";
+import logger from '../utils/logger';
 import { CostItem } from "../components/CostUploader/types";
+import { costApi } from "../services/costApi";
+import type { BackendElement as ApiBackendElement } from "../services/costApi";
 
 // Define types for cost items
 interface MongoElement {
@@ -74,7 +77,7 @@ interface ProjectData {
 }
 
 // Kafka context interface
-interface KafkaContextProps {
+interface ApiContextProps {
   connectionStatus: string;
   sendCostUpdate: (
     projectId: string,
@@ -94,11 +97,6 @@ interface KafkaContextProps {
   formatTimestamp: (timestamp: string) => string;
   mongoGetElements: (projectId: string) => Promise<MongoElement[]>;
   mongoProjectCost: (projectId: string) => Promise<number>;
-  sendMessage: (message: string) => void;
-  registerMessageHandler: (
-    messageId: string,
-    handler: (data: Record<string, unknown>) => void
-  ) => void;
   availableEbkpCodes: EbkpCodeInfo[];
   matchCodes: (codes: string[]) => EbkpCodeInfo[];
   getProjectElements: (projectName: string) => Promise<ProjectElement[]>;
@@ -107,12 +105,13 @@ interface KafkaContextProps {
     ebkpCode: string
   ) => Promise<ProjectElement[]>;
   getCachedProjectData: (projectName: string) => ProjectData | null;
+  reapplyCostData: (projectName: string) => Promise<void>; // Add new function
   backendUrl: string;
   ebkpLoadError: string | null; // Add error state to interface
 }
 
 // Create the context with default values
-const KafkaContext = createContext<KafkaContextProps>({
+const ApiContext = createContext<ApiContextProps>({
   connectionStatus: "DISCONNECTED",
   sendCostUpdate: async () => false,
   projectUpdates: {},
@@ -122,22 +121,21 @@ const KafkaContext = createContext<KafkaContextProps>({
   formatTimestamp: (timestamp) => timestamp,
   mongoGetElements: async () => [],
   mongoProjectCost: async () => 0,
-  sendMessage: () => {},
-  registerMessageHandler: () => {},
   availableEbkpCodes: [],
   matchCodes: () => [],
   getProjectElements: async () => [],
   getElementsForEbkp: async () => [],
   getCachedProjectData: () => null,
+  reapplyCostData: async () => {}, // Add dummy implementation
   backendUrl: "",
   ebkpLoadError: null,
 });
 
 // Export the hook to use the context
-export const useKafka = () => useContext(KafkaContext);
+export const useApi = () => useContext(ApiContext);
 
 // Provider component props
-interface KafkaProviderProps {
+interface ApiProviderProps {
   children: ReactNode;
 }
 
@@ -156,9 +154,11 @@ declare global {
   }
 }
 
-interface BackendElement {
-  _id: string;
-  project_id: string;
+// Use a different name for the local BackendElement to avoid conflict
+interface LocalBackendElement {
+  _id?: string;  // Make optional
+  project_id?: string;  // Make optional
+  id?: string;  // Add id as optional
   ifc_id?: string;
   global_id?: string;
   ifc_class?: string;
@@ -187,9 +187,9 @@ interface BackendElement {
   [key: string]: unknown;
 }
 
-export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
-  const [connectionStatus, setConnectionStatus] = useState("CONNECTED"); // Always connected for HTTP
-  const [projectUpdates, setProjectUpdates] = useState<
+export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
+  const [connectionStatus] = useState("CONNECTED");
+  const [projectUpdates] = useState<
     Record<string, ProjectUpdate>
   >({});
   const [availableEbkpCodes, setAvailableEbkpCodes] = useState<
@@ -209,24 +209,10 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     const loadEbkpCodes = async () => {
       try {
         setEbkpLoadError(null); // Clear any previous errors
-        const response = await fetch(`${backendUrl}/available-ebkp-codes`);
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data.codes)) {
-            const codeObjects: EbkpCodeInfo[] = data.codes.map(
-              (code: string) => ({
-                code,
-                type: code.split(".")[0],
-              })
-            );
-            setAvailableEbkpCodes(codeObjects);
-          }
-        } else {
-          // Set error state if response is not ok
-          setEbkpLoadError(`Failed to load EBKP codes: ${response.status} ${response.statusText}`);
-        }
+        const codes = await costApi.getAvailableEbkpCodes();
+        setAvailableEbkpCodes(codes);
       } catch (error) {
-        console.error("Error loading EBKP codes:", error);
+        logger.error("Error loading EBKP codes:", error);
         // Set error state when an error occurs
         setEbkpLoadError(error instanceof Error ? error.message : "Failed to load EBKP codes");
       }
@@ -247,40 +233,13 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     elementsWithCost: number
   ): Promise<boolean> => {
     try {
-      const notification = {
-        eventType: "COST_UPDATED",
-        timestamp: new Date().toISOString(),
-        producer: "plugin-cost",
-        payload: {
-          projectId: projectId,
-          projectName: projectName,
-          elementCount: elementsWithCost,
-          totalCost: totalCost,
-        },
-        metadata: {
-          version: "1.0",
-          correlationId: `cost-update-${Date.now()}`,
-        },
-      };
-
-      const response = await fetch(`${backendUrl}/send-cost-update`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(notification),
-      });
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to send cost update: ${response.status} ${response.statusText}`
-        );
-      }
-
+      // This function is kept for compatibility but doesn't do anything
+      // since the /send-cost-update endpoint doesn't exist on the backend
+      logger.info(`Cost update requested for project ${projectName}: ${totalCost} CHF (${elementsWithCost} elements)`);
       return true;
     } catch (error) {
-      console.error(
-        `Error sending cost update for project ${projectId}:`,
+      logger.error(
+        `Error in sendCostUpdate for project ${projectId}:`,
         error
       );
       return false;
@@ -311,22 +270,9 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         minute: "2-digit",
       });
     } catch (error) {
-      console.error("Error formatting timestamp:", error);
+      logger.error("Error formatting timestamp:", error);
       return timestamp;
     }
-  };
-
-  // Legacy function - no longer needed for HTTP
-  const sendMessage = (message: string): void => {
-    console.warn("sendMessage is deprecated for HTTP-based communication");
-  };
-
-  // Legacy function - no longer needed for HTTP
-  const registerMessageHandler = (
-    messageId: string,
-    handler: (data: Record<string, unknown>) => void
-  ): void => {
-    console.warn("registerMessageHandler is deprecated for HTTP-based communication");
   };
 
   // Function to match codes with available eBKP codes
@@ -348,44 +294,48 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
 
   // Map backend element to project element
   const mapBackendElementToProjectElement = (
-    element: BackendElement
+    element: ApiBackendElement | LocalBackendElement
   ): ProjectElement => {
+    // Cast to LocalBackendElement for consistent access
+    const el = element as LocalBackendElement;
     let ebkpCode = "";
 
-    if (element.classification && element.classification.id) {
-      ebkpCode = element.classification.id;
-    } else if (element.properties && element.properties.ebkph) {
-      ebkpCode = element.properties.ebkph;
+    if (el.classification && el.classification.id) {
+      ebkpCode = el.classification.id;
+    } else if (el.properties && el.properties.ebkph) {
+      ebkpCode = el.properties.ebkph;
     } else {
       const possibleFields = ["ebkp_code", "ebkp", "ebkph"];
       for (const field of possibleFields) {
-        if (element[field]) {
-          ebkpCode = element[field] as string;
+        if (el[field]) {
+          ebkpCode = el[field] as string;
           break;
         }
       }
     }
 
     let area = 0;
-    if (element.quantity && element.quantity.value) {
-      area = element.quantity.value;
-    } else if (element.area) {
-      area = element.area;
+    if (el.quantity && typeof el.quantity === 'object' && 'value' in el.quantity) {
+      area = el.quantity.value;
+    } else if (typeof el.quantity === 'number') {
+      area = el.quantity;
+    } else if (el.area) {
+      area = el.area;
     }
 
     return {
-      id: element.global_id || element._id,
+      id: el.global_id || el.id || el._id || "",
       ebkpCode: ebkpCode,
-      quantity: element.quantity,
+      quantity: typeof el.quantity === 'object' ? el.quantity : undefined,
       area: area,
-      description: element.name || "",
-      category: element.ifc_class || element.properties?.category || "",
-      level: element.level || element.properties?.level || "",
-      ifc_class: element.ifc_class || "",
-      type_name: element.type_name || "",
-      name: element.name || "",
-      is_structural: element.is_structural || false,
-      is_external: element.is_external || false,
+      description: el.name || "",
+      category: el.ifc_class || el.properties?.category || "",
+      level: el.level || el.properties?.level || "",
+      ifc_class: el.ifc_class || "",
+      type_name: el.type_name || "",
+      name: el.name || "",
+      is_structural: el.is_structural || false,
+      is_external: el.is_external || false,
     };
   };
 
@@ -399,19 +349,8 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
       }
 
       try {
-        const response = await fetch(
-          `${backendUrl}/project-elements/${encodeURIComponent(projectName)}`
-        );
-
-        if (!response.ok) {
-          throw new Error(
-            `Failed to fetch project elements: ${response.status} ${response.statusText}`
-          );
-        }
-
-        const data = await response.json();
-        const elements = data.elements || [];
-        const mappedElements = elements.map((element: BackendElement) =>
+        const elements = await costApi.getProjectElements(projectName);
+        const mappedElements = elements.map((element: ApiBackendElement) =>
           mapBackendElementToProjectElement(element)
         );
 
@@ -451,7 +390,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
 
         return elementsWithEbkp;
       } catch (error) {
-        console.error(
+        logger.error(
           `Error fetching project elements: ${
             error instanceof Error ? error.message : String(error)
           }`
@@ -459,7 +398,7 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         return [];
       }
     },
-    [backendUrl, projectDataCache]
+    [projectDataCache]
   );
 
   // Function to get elements for a specific eBKP code
@@ -544,8 +483,19 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
     [projectDataCache]
   );
 
+  // Re-apply cost data
+  const reapplyCostData = async (projectName: string): Promise<void> => {
+    try {
+      await costApi.reapplyCosts(projectName);
+      // Don't return anything to match the Promise<void> type
+    } catch (error) {
+      logger.error("Error re-applying cost data:", error);
+      // Don't return anything, just log the error
+    }
+  };
+
   return (
-    <KafkaContext.Provider
+    <ApiContext.Provider
       value={{
         connectionStatus,
         sendCostUpdate,
@@ -556,8 +506,6 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         formatTimestamp,
         mongoGetElements: () => Promise.resolve([]),
         mongoProjectCost: () => Promise.resolve(0),
-        sendMessage,
-        registerMessageHandler,
         availableEbkpCodes,
         matchCodes,
         getProjectElements,
@@ -565,9 +513,10 @@ export const KafkaProvider: React.FC<KafkaProviderProps> = ({ children }) => {
         getCachedProjectData,
         backendUrl,
         ebkpLoadError,
+        reapplyCostData,
       }}
     >
       {children}
-    </KafkaContext.Provider>
+    </ApiContext.Provider>
   );
 };

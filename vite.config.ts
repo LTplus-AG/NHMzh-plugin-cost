@@ -9,8 +9,6 @@ export default defineConfig(({ mode }) => {
 
   console.log(`Running in ${mode} mode`);
   console.log(`API URL: ${env.VITE_API_URL}`);
-  // console.log(`QTO API URL: ${env.VITE_QTO_API_URL}`); // Assuming this was removed earlier or not needed
-  console.log(`WebSocket URL: ${env.VITE_WEBSOCKET_URL}`);
 
   return {
     plugins: [
@@ -31,10 +29,6 @@ export default defineConfig(({ mode }) => {
     define: {
       // Expose environment variables to the client
       "import.meta.env.VITE_API_URL": JSON.stringify(env.VITE_API_URL),
-      // "import.meta.env.VITE_QTO_API_URL": JSON.stringify(env.VITE_QTO_API_URL), // Assuming this was removed earlier or not needed
-      "import.meta.env.VITE_WEBSOCKET_URL": JSON.stringify(
-        env.VITE_WEBSOCKET_URL
-      ),
     },
     build: {
       target: "esnext",

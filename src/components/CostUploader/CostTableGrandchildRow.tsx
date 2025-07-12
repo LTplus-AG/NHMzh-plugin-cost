@@ -4,7 +4,7 @@ import SyncIcon from "@mui/icons-material/Sync";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { CostItem } from "./types";
 import { getColumnStyle } from "./styles";
-import { useKafka } from "../../contexts/KafkaContext";
+import { useApi } from "../../contexts/ApiContext";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -37,7 +37,7 @@ const CostTableGrandchildRow = ({
 }: CostTableGrandchildRowProps) => {
   // Get the Kafka context
   const { replaceEbkpPlaceholders, calculateUpdatedChf, formatTimestamp } =
-    useKafka();
+    useApi();
 
   // Check if this item has QTO data from MongoDB
   const hasQtoData = (item: CostItem): boolean => {

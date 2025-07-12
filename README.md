@@ -1,207 +1,120 @@
-# 💰 NHMzh Plugin Cost
+# 💰 NHMzh Plugin-Cost: Kostenberechnung
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
-[![Node.js](https://img.shields.io/badge/Node.js-20.x-339933.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
-[![WebSockets](https://img.shields.io/badge/WebSockets-010101.svg?style=for-the-badge&logo=socket.io)](https://socket.io/)
+[![React](https://img.shields.io/badge/React-18.3-61DAFB.svg?style=for-the-badge&logo=react)](https://reactjs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-18.x-339933.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248.svg?style=for-the-badge&logo=mongodb)](https://www.mongodb.com/)
-[![Kafka](https://img.shields.io/badge/Kafka-231F20.svg?style=for-the-badge&logo=apache-kafka)](https://kafka.apache.org/)
-[![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen.svg?style=for-the-badge)](https://github.com/LTplus-AG/NHMzh-plugin-cost)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
 
-A cost calculation module for the Sustainability Monitoring System for the City of Zurich (Nachhaltigkeitsmonitoring der Stadt Zürich), allowing extraction of cost data from Excel files and applying it to BIM elements.
+Modul zur Kostenberechnung für das Nachhaltigkeitsmonitoring der Stadt Zürich (NHMzh). Es ermöglicht das Anwenden von Kostenkennwerten (z.B. aus Excel) auf BIM-Daten.
 
-## 📋 Table of Contents
+## 📋 Inhaltsverzeichnis
 
-- [Features](#-features)
-- [Architecture](#-architecture)
+- [Architektur und Datenfluss](#-architektur-und-datenfluss)
+- [Funktionsumfang](#-funktionsumfang)
+- [Datenbank-Schema](#-datenbank-schema)
+- [API-Endpunkte](#-api-endpunkte)
 - [Installation](#-installation)
-- [Kafka Topics](#-kafka-topics)
-- [Data Models](#-data-models)
-- [API Endpoints](#-api-endpoints)
-- [WebSocket Events](#-websocket-events)
-- [Integration](#-integration)
-- [Tech Stack](#-tech-stack)
-- [License](#-license)
+- [Lizenz](#-lizenz)
 
-## ✨ Features
+---
 
-- **WebSocket Backend**: Real-time communication with frontend
-- **Kafka Integration**: Receives elements from QTO plugin and publishes cost calculations
-- **Excel Upload**: Import unit costs from Excel files
-- **MongoDB Integration**: Persistent storage of cost data
-- **Cost Calculation**: Automatically calculate costs based on element areas and unit costs
-- **Project Summaries**: Calculate and store project-level cost summaries
-- **Integration with NHMzh Ecosystem**: Works with QTO and LCA modules
+### 🏛️ Architektur und Datenfluss
 
-## 🔧 Architecture
+Das Cost-Plugin ist eine Webanwendung mit einem React-Frontend und einem Node.js-Backend.
 
-### Backend
+- **Frontend**: Eine in React/TypeScript entwickelte Oberfläche, die es Benutzern ermöglicht, Kostenkennwerte pro Projekt zu verwalten (z.B. durch Excel-Upload) und die berechneten Kosten pro Bauteil einzusehen.
+- **Backend**: Ein Node.js REST API Server, der die Hauptlogik für die Kostenberechnung enthält. Er bietet HTTP-Endpunkte für alle Operationen.
 
-- **WebSocket Server**: Built with Node.js and Socket.IO for real-time communication
-- **Kafka Consumer**: Listens for element updates from the QTO plugin
-- **Kafka Producer**: Publishes cost calculations for consumption by other modules
-- **MongoDB Connector**: Handles database operations for storing and retrieving cost data
-- **Excel Parser**: Extracts unit cost data from uploaded Excel spreadsheets
+**Datenfluss:**
 
-### Frontend
+1.  **Datenabruf**: Das **Cost-Backend** liest die erforderlichen Bauteildaten (Mengen, eBKP-Codes) **direkt aus der `qto`-Datenbank** des QTO-Plugins ab.
+2.  **Kostenkennwerte**: Der Benutzer lädt über das Frontend Kostenkennwerte (CHF/Einheit) pro eBKP-Code, die im Backend verarbeitet werden.
+3.  **Kostenberechnung**: Das Backend verknüpft die Bauteile aus der `qto`-Datenbank mit den passenden Kostenkennwerten und berechnet die Gesamtkosten pro Bauteil.
+4.  **Datenspeicherung**: Die Ergebnisse werden in einer dedizierten **`cost`-MongoDB-Datenbank** gespeichert, primär in der `costElements`-Sammlung.
+5.  **Visualisierung**: Das Frontend ruft die berechneten Kosten vom Backend ab und stellt sie dar.
 
-- **React/TypeScript** with a component-based architecture
-- **Excel Upload Component**: For importing unit costs
-- **Cost Table**: Interactive display of costs with filtering capabilities
-- **EBKP Structure View**: Hierarchical cost breakdown by building element classification
-- **Project Summary Dashboard**: Visualizes total costs and breakdowns by category
 
-### Data Flow
+### ✨ Funktionsumfang
 
-1. Elements are received from the QTO plugin
-2. Unit costs are imported by users through Excel upload
-3. Costs are calculated by matching elements with appropriate unit costs
-4. Results are stored in MongoDB and published to Kafka
-5. Other modules (e.g., Dashboard) can retrieve and use cost data
+- **Direkte QTO-Integration**: Liest Mengen- und Bauteildaten direkt aus der QTO-Datenbank.
+- **Kostenkennwert-Import**: Ermöglicht den Upload von eBKP-basierten Kostenkennwerten aus Excel-Dateien.
+- **Automatische Kostenberechnung**: Verknüpft Bauteile mit Kostenkennwerten basierend auf eBKP-Codes und berechnet die Gesamtkosten.
+- **Hierarchische Kostendarstellung**: Gruppiert Kosten nach der eBKP-Struktur.
+- **REST API**: Bietet strukturierte HTTP-Endpunkte für alle Operationen.
+- **Sicherheitsfeatures**: Rate Limiting, Input-Validierung und Timeout-Handling.
 
-## 🚀 Installation
+### 💾 Datenbank-Schema
 
-### Prerequisites
+Die berechneten Kosten werden in der `cost`-Datenbank gespeichert. Die wichtigste Sammlung ist `costElements`, die eine Kombination aus den QTO-Daten und den angereicherten Kostendaten darstellt.
 
-- Docker and Docker Compose
-- Node.js 20+ (for development)
-
-### Setup
-
-The plugin-cost module is designed to integrate with the main NHMzh docker-compose environment. It relies on the shared MongoDB and Kafka services defined in the root docker-compose.yml.
-
-1. Clone the repository:
-
-```bash
-git clone https://github.com/LTplus-AG/NHMzh-plugin-cost.git
-cd NHMzh-plugin-cost
-```
-
-2. Run the entire NHMzh environment:
-
-```bash
-docker-compose up -d
-```
-
-For local development outside Docker:
-
-```bash
-cd NHMzh-plugin-cost
-npm install
-npm run dev
-
-cd socket-backend
-npm install
-npm run dev
-```
-
-## 📡 Kafka Topics
-
-The Cost plugin's Kafka integration:
-
-- **Consumes** element data from the QTO plugin
-- **Publishes** enhanced elements with cost information 
-
-When cost calculations are performed, the plugin sends enhanced element data with cost fields:
-
+**`cost.costElements` Beispiel-Dokument:**
 ```json
 {
-  "id": "element-id",
-  "element_id": "element-id",
-  "project": "Project Name",
-  "filename": "model.ifc",
-  "cost_unit": 100,
-  "cost": 1000
-  // Original element properties from QTO are spread here
+  "_id": "ObjectId",
+  "qto_element_id": "ObjectId", // Referenz zum Original-Element in qto.elements
+  "project_id": "ObjectId",
+  "global_id": "3DqaUydM99ehywE4_2hm1u",
+  "ifc_class": "IfcWall",
+  "name": "Aussenwand_470mm",
+  "quantity": {
+    "value": 125.5,
+    "type": "area",
+    "unit": "m²"
+  },
+  "classification": {
+    "id": "C2.01",
+    "system": "eBKP"
+  },
+  // --- Angereicherte Kostendaten ---
+  "unit_cost": 450.0,
+  "total_cost": 56475.0,
+  "currency": "CHF",
+  "created_at": "ISODate"
 }
 ```
 
-The message includes the original element properties from QTO with the addition of cost-specific fields, allowing downstream systems to use both geometric and cost data together.
+### 📡 API-Endpunkte
 
-## 💾 Data Models
+Das Backend stellt folgende REST API-Endpunkte bereit:
 
-The plugin uses the shared MongoDB instance for persistent storage of cost data. The following collections are created in the `cost` database:
+- **GET `/health`** - Health Check
+- **GET `/projects`** - Liste aller Projekte
+- **GET `/project-elements/:projectName`** - Alle Elemente eines Projekts
+- **GET `/available-ebkp-codes`** - Verfügbare eBKP-Codes
+- **GET `/get-kennwerte/:projectName`** - Kostenkennwerte eines Projekts
+- **POST `/save-kennwerte`** - Kostenkennwerte speichern
+- **POST `/reapply-costs`** - Kostenberechnung neu anstossen
+- **POST `/confirm-costs`** - Berechnete Kosten bestätigen und an Kafka senden
 
-### Cost Data Schema
+Alle Endpunkte verfügen über:
+- Rate Limiting (100 Anfragen/15 Min, 20 für Schreiboperationen)
+- Input-Validierung
+- Fehlerbehandlung
+- 30 Sekunden Timeout
 
-```javascript
-{
-  element_id: ObjectId,     // Reference to element in QTO database
-  project_id: ObjectId,     // Reference to project in QTO database
-  unit_cost: Number,        // Cost per unit area
-  total_cost: Number,       // Total cost for the element
-  currency: String,         // Currency (default: CHF)
-  calculation_date: Date,   // When cost was calculated
-  calculation_method: String, // How cost was calculated
-  metadata: {
-    ebkp_code: String,      // EBKP classification code
-    source: String          // Source of the cost data
-  }
-}
+### 🚀 Installation
+
+Die Installation und Ausführung erfolgt im Rahmen der gesamten NHMzh-Umgebung via Docker Compose. Für die lokale Entwicklung:
+
+**Frontend (React):**
+```bash
+# In das Plugin-Verzeichnis wechseln
+cd plugin-cost
+# Abhängigkeiten installieren
+npm install
+# Entwicklungsserver starten
+npm run dev
 ```
 
-### Cost Summary Schema
-
-```javascript
-{
-  project_id: ObjectId,     // Reference to project
-  total_cost: Number,       // Total project cost
-  breakdown: [              // Breakdown by EBKP category
-    {
-      category: String,     // EBKP category (e.g., "C")
-      cost: Number          // Total cost for this category
-    }
-  ],
-  created_at: Date,         // When summary was created
-  calculation_parameters: {
-    method: String,         // Calculation method
-    currency: String        // Currency
-  }
-}
+**Backend (Node.js):**
+```bash
+cd plugin-cost/backend
+# Abhängigkeiten installieren
+npm install
+# Backend-Server starten
+npm run dev
 ```
 
-## 🔌 API Endpoints
+### 📄 Lizenz
 
-The WebSocket backend provides the following HTTP endpoints:
-
-- `GET /` or `/health`: Health check and status
-- `GET /elements`: List of all elements
-- `GET /elements/ebkph/:code`: Elements filtered by EBKP code
-- `GET /elements/project/:id`: Elements filtered by project
-- `GET /project-cost/:id`: Cost summary for a project
-- `GET /element-cost/:id`: Cost data for a specific element
-- `GET /costs`: Available unit costs
-- `GET /reapply_costs`: Recalculate costs for all elements
-
-## 📡 WebSocket Events
-
-The WebSocket server handles the following events:
-
-- `connection`: Sent when client connects
-- `unit_costs`: Client uploads cost data from Excel
-- `cost_match_info`: Server informs about cost matches
-- `element_update`: Server informs about new elements
-- `cost_data_response`: Server response to Excel upload
-
-## 🔗 Integration
-
-The Cost plugin integrates with other NHMzh modules:
-
-- **QTO Plugin**: Receives element data and quantities via Kafka (see [NHMzh-plugin-qto](https://github.com/LTplus-AG/NHMzh-plugin-qto))
-- **LCA Plugin**: Sends cost data for economic-environmental assessments (see [NHMzh-plugin-lca](https://github.com/LTplus-AG/NHMzh-plugin-lca))
-- **Central Database**: Uses shared MongoDB for data persistence
-
-## 🛠️ Tech Stack
-
-- **Node.js** - Server-side JavaScript runtime
-- **WebSockets** - Real-time communication
-- **MongoDB** - Document database
-- **Kafka** - Message broker
-- **Docker** - Containerization
-
-## 📄 License
-
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
-
-GNU Affero General Public License v3.0 (AGPL-3.0): This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-See <https://www.gnu.org/licenses/agpl-3.0.html> for details.
+Dieses Projekt ist unter der GNU Affero General Public License v3.0 (AGPL-3.0) lizenziert.
