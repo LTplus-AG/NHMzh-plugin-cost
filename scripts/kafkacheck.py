@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-kafkacheck.py – Processes multiple Kafka cost export files and calculates cost totals.
+kafkacheck.py - Processes multiple Kafka cost export files and calculates cost totals.
 
 USAGE
     python plugin-cost/scripts/kafkacheck.py <directory_path> <file_pattern>
