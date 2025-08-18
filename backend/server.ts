@@ -19,9 +19,9 @@ import {
   getElementsCollection,
   getKennwerteCollection,
   getCostElementsCollection,
-  ElementsResponse,
-  Kennwerte,
 } from "./mongodb";
+
+import { ElementsResponse, Kennwerte } from "./types";
 
 dotenv.config();
 
@@ -159,7 +159,7 @@ app.get("/project-elements/:projectName",
         modelMetadata = {
           filename: project.metadata.filename || `${projectName}.ifc`,
           element_count: elements.length,
-          upload_timestamp: project.metadata.upload_timestamp || project.created_at || new Date().toISOString(),
+          upload_timestamp: project.metadata.upload_timestamp || (project.created_at ? project.created_at.toISOString() : new Date().toISOString()),
           project_id: project._id.toString()
         };
         logger.info(`Project metadata for ${projectName}:`, {
