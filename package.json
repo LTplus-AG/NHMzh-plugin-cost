@@ -15,7 +15,7 @@
     "@emotion/styled": "^11.14.0",
     "@mui/icons-material": "^6.0.0",
     "@mui/material": "^6.2.1",
-    "@nhmzh/shared-auth": "file:../shared/auth",
+    "@nhmzh/shared-auth": "file:../shared/NHMzh-Shared_Auth",
     "exceljs": "^4.4.0",
     "oidc-client-ts": "^3.1.0",
     "react": "^18.3.1",
