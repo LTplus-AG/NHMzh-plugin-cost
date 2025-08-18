@@ -20,12 +20,16 @@
     "express-timeout-handler": "^2.2.2",
     "express-validator": "^7.2.1",
     "helmet": "^8.1.0",
+    "axios": "^1.7.9",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^3.1.0",
     "kafkajs": "^2.2.4",
     "mongodb": "^5.1.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^20.11.28",
     "nodemon": "^3.1.0",
     "ts-node": "^10.9.2",
