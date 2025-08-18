@@ -27,6 +27,9 @@ import SmartExcelButton from "./SmartExcelButton";
 import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService } from "../utils/excelService";
 import ExcelImportDialog from "./ExcelImportDialog";
+import EmptyState from "./ui/EmptyState";
+import { Upload as UploadIcon, Assessment as AssessmentIcon } from "@mui/icons-material";
+import { navigateToIfcUploader, navigateToQto, getCurrentPlugin } from "../utils/navigation";
 import logger from '../utils/logger';
 
 const getAvailableQuantities = (el: MongoElement) => {
@@ -942,17 +945,53 @@ const MainPage = () => {
               </Box>
             </Box>
 
-            <EbkpCostForm
-              stats={ebkpStats}
-              kennwerte={kennwerte}
-              onKennwertChange={(code: string, value: number) => {
-                logger.debug(`Updating kennwert for ${code}: ${value}`);
-                setKennwerte((prev) => ({ ...prev, [code]: value }))
-              }}
-              onQuantityTypeChange={handleQuantityTypeChange}
-              totalCost={totalCost}
-              elements={currentElements}
-            />
+            {projectsList.length === 0 && !loadingProjects ? (
+              <EmptyState
+                icon="folder"
+                title="Keine Projekte mit Kostendaten verfügbar"
+                description="Für die Kostenberechnung sind IFC-Dateien und bestätigte Mengen aus dem Mengen-Modul erforderlich. Laden Sie zunächst eine IFC-Datei über den IFC Uploader hoch und bestätigen Sie die Mengen, oder wenden Sie sich an die zuständige Person."
+                actions={[
+                  {
+                    label: "IFC Uploader öffnen",
+                    onClick: () => navigateToIfcUploader(getCurrentPlugin()),
+                    variant: "contained",
+                    startIcon: <UploadIcon />
+                  },
+                  {
+                    label: "QTO öffnen",
+                    onClick: () => navigateToQto(getCurrentPlugin()),
+                    variant: "outlined",
+                    startIcon: <AssessmentIcon />
+                  }
+                ]}
+              />
+            ) : selectedProject && ebkpStats.length === 0 && !loadingElements ? (
+              <EmptyState
+                icon="assessment"
+                title="Noch keine bestätigten Mengen"
+                description="Für dieses Projekt sind noch keine bestätigten Mengen aus dem Mengen-Modul verfügbar. Bestätigen Sie zunächst die Mengen, damit die Kostenberechnung durchgeführt werden kann."
+                actions={[
+                  {
+                    label: "QTO öffnen",
+                    onClick: () => navigateToQto(getCurrentPlugin()),
+                    variant: "contained",
+                    startIcon: <AssessmentIcon />
+                  }
+                ]}
+              />
+            ) : (
+              <EbkpCostForm
+                stats={ebkpStats}
+                kennwerte={kennwerte}
+                onKennwertChange={(code: string, value: number) => {
+                  logger.debug(`Updating kennwert for ${code}: ${value}`);
+                  setKennwerte((prev) => ({ ...prev, [code]: value }))
+                }}
+                onQuantityTypeChange={handleQuantityTypeChange}
+                totalCost={totalCost}
+                elements={currentElements}
+              />
+            )}
 
 
           </div>
