@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build --mode production",
     "build:test": "tsc -b && vite build --mode test",
     "lint": "eslint .",
-    "preview": "vite preview --mode production"
+    "preview": "vite preview --mode production",
+    "test": "vitest run"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -18,7 +19,8 @@
     "exceljs": "^4.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^7.1.1"
+    "react-router-dom": "^7.1.1",
+    "vitest": "^3.2.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",

@@ -61,17 +61,8 @@ const CostTableGrandchildRow = ({
     return originalMenge;
   };
 
-  // Get CHF value - calculate based on area when available
+  // Get CHF value
   const getChfValue = () => {
-    // If item has area from MongoDB
-    if (
-      item.area !== undefined &&
-      item.kennwert !== null &&
-      item.kennwert !== undefined
-    ) {
-      return item.area * item.kennwert;
-    }
-
     return calculateUpdatedChf(item);
   };
 
