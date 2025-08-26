@@ -1,4 +1,5 @@
 import { CostItem } from "./types";
+import { computeRowTotal } from "../../utils/costCalculations";
 
 // Define ProjectElement type locally to avoid the import issue
 interface ProjectElement {
@@ -270,10 +271,14 @@ export class EbkpMapper {
 
             // Recalculate CHF based on exact match area and original kennwert
             if (typeof item.kennwert === "number" && item.kennwert > 0) {
-              item.chf = item.kennwert * totalExactArea;
-              item.totalChf = item.chf; // Keep consistent
+              const rowTotal = computeRowTotal({
+                quantity: totalExactArea,
+                unitPrice: item.kennwert,
+                factor: item.factor,
+              });
+              item.chf = rowTotal;
+              item.totalChf = rowTotal; // Keep consistent
             } else {
-              // Kennwert is missing or zero, cannot calculate cost
               item.chf = 0;
               item.totalChf = 0;
             }
@@ -345,7 +350,13 @@ export class EbkpMapper {
 
         // Now, sum the final chf values of the direct children
         const childrenTotalChf = item.children.reduce(
-          (sum, child) => sum + (child.chf || child.totalChf || 0), // Use the final calculated chf of children
+          (sum, child) =>
+            sum +
+            computeRowTotal({
+              quantity: child.area !== undefined ? child.area : child.menge,
+              unitPrice: child.kennwert,
+              factor: child.factor,
+            }),
           0
         );
 

@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build --mode production",
     "build:test": "tsc -b && vite build --mode test",
     "lint": "eslint .",
-    "preview": "vite preview --mode production"
+    "preview": "vite preview --mode production",
+    "test": "node --test tests/costCalculations.test.js"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

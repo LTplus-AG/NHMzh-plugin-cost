@@ -10,6 +10,7 @@ export interface CostItem {
   ebkp?: string;
   bezeichnung?: string;
   kennwert?: number;
+  factor?: number;
   menge?: number;
   einheit?: string;
   totalChf?: number;
@@ -62,6 +63,7 @@ export interface EnhancedCostItem extends CostItem {
   menge: number;
   totalChf: number;
   kennwert: number;
+  factor: number;
   bezeichnung: string;
   originalItem?: Partial<CostItem>; // Make originalItem optional and partial
 }

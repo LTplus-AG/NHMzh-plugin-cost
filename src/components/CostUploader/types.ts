@@ -27,6 +27,8 @@ export interface CostItem {
 
   /** Unit cost (per unit of measurement) */
   kennwert?: number;
+  /** Optional multiplication factor */
+  factor?: number;
   /** Total cost value in CHF */
   chf?: number;
   /** Alternative unit cost field */

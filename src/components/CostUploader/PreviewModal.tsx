@@ -31,6 +31,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import WarningIcon from "@mui/icons-material/Warning";
 import InfoIcon from "@mui/icons-material/Info";
 import { MetaFile, CostItem } from "./types";
+import { computeRowTotal } from "../../utils/costCalculations";
 import { useApi } from "../../contexts/ApiContext";
 
 // Define a more specific type for the enhanced data passed to onConfirm
@@ -548,8 +549,12 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       if (!groups[groupKey]) {
         groups[groupKey] = 0;
       }
-      // Sum the final chf of this leaf item
-      groups[groupKey] += item.chf || item.totalChf || 0;
+      const quantity = item.area !== undefined ? item.area : item.menge;
+      groups[groupKey] += computeRowTotal({
+        quantity,
+        unitPrice: item.kennwert,
+        factor: item.factor,
+      });
     });
 
     // Filter out zero values before returning
@@ -587,7 +592,11 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
         const bimMappedArea = costItem.area !== undefined ? costItem.area : 0; // Area/Quantity from BIM mapping
         const unitCost =
           costItem.kennwert !== undefined ? costItem.kennwert : 0; // Unit cost from Excel
-        const totalItemCost = costItem.chf !== undefined ? costItem.chf : 0; // Total CHF for this item, after BIM mapping
+        const totalItemCost = computeRowTotal({
+          quantity: bimMappedArea,
+          unitPrice: unitCost,
+          factor: costItem.factor,
+        });
 
         // Create a QTO-based object with cost data
         return {

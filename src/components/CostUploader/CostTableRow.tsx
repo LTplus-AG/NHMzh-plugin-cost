@@ -19,6 +19,7 @@ import { getColumnStyle, columnWidths } from "./styles";
 import { tableStyle } from "./styles";
 import CostTableChildRow from "./CostTableChildRow.tsx";
 import { useApi } from "../../contexts/ApiContext";
+import { computeRowTotal } from "../../utils/costCalculations";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -61,8 +62,7 @@ const CostTableRow = ({
   const [hasQtoInTreeState, setHasQtoInTreeState] = useState<boolean>(false);
 
   // Get the Kafka context
-  const { replaceEbkpPlaceholders, calculateUpdatedChf, formatTimestamp } =
-    useApi();
+  const { replaceEbkpPlaceholders, formatTimestamp } = useApi();
 
   // Update the hasQtoData function to check for IFC data
   const hasQtoData = (item: CostItem): boolean => {
@@ -161,27 +161,30 @@ const CostTableRow = ({
       elementCount: number;
     }>(
       (acc, child) => {
-        // If child has direct area from MongoDB, add it
         if (child.area !== undefined) {
           acc.area += child.area;
-          acc.cost += child.area * (child.kennwert || 0);
-          // Only count elements at the leaf level (no children)
+          acc.cost += computeRowTotal({
+            quantity: child.area,
+            unitPrice: child.kennwert,
+            factor: child.factor,
+          });
           if (!child.children || child.children.length === 0) {
             acc.elementCount += child.element_count || 1;
           }
         }
-        // If child has its own children, add their totals
         if (child.children && child.children.length > 0) {
           const childTotals = calculateTotalsFromChildren(child);
           acc.area += childTotals.area;
           acc.cost += childTotals.cost;
           acc.elementCount += childTotals.elementCount;
         }
-        // If child has no IFC data but has a menge, add it
         if (child.area === undefined && child.menge !== undefined) {
           acc.area += child.menge || 0;
-          acc.cost += (child.menge || 0) * (child.kennwert || 0);
-          // Only count non-IFC items at the leaf level
+          acc.cost += computeRowTotal({
+            quantity: child.menge || 0,
+            unitPrice: child.kennwert,
+            factor: child.factor,
+          });
           if (!child.children || child.children.length === 0) {
             acc.elementCount += 1;
           }
@@ -213,13 +216,16 @@ const CostTableRow = ({
     // Calculate total cost from children
     const { cost } = calculateTotalsFromChildren(item);
 
-    // If we have a total cost from children, use it
     if (cost > 0) {
       return cost;
     }
 
-    // Fallback to original calculation
-    return calculateUpdatedChf(item);
+    const quantity = item.area !== undefined ? item.area : item.menge;
+    return computeRowTotal({
+      quantity,
+      unitPrice: item.kennwert,
+      factor: item.factor,
+    });
   };
 
   // Process text fields to replace any eBKP placeholders
@@ -475,7 +481,7 @@ const CostTableRow = ({
                 />
               </Tooltip>
             ) : (
-              <>{renderNumber(item.totalChf)}</>
+              <>{renderNumber(getChfValue())}</>
             )}
           </Box>
         </TableCell>

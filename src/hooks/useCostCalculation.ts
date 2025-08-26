@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { CostItem } from "../components/CostUploader/types"; // Adjust path as needed
+import { computeRowTotal, computeGroupTotal } from "../utils/costCalculations";
 
 // Helper function to get all items from a hierarchical structure (recursive)
 const getAllItems = (items: CostItem[]): CostItem[] => {
@@ -32,10 +33,25 @@ export const useCostCalculation = (
       return { totalCost: 0, flatItems: [] };
     }
 
-    // Calculate totalCost by summing ONLY the top-level items.
-    // EbkpMapper.recalculateParentTotals should have already aggregated children totals into these parents.
+    const calculateItemCost = (item: CostItem): number => {
+      if (item.children && item.children.length > 0) {
+        const rows = item.children.map(child => ({
+          quantity: child.area !== undefined ? child.area : child.menge,
+          unitPrice: child.kennwert,
+          factor: child.factor,
+        }));
+        return computeGroupTotal(rows);
+      }
+      const quantity = item.area !== undefined ? item.area : item.menge;
+      return computeRowTotal({
+        quantity,
+        unitPrice: item.kennwert,
+        factor: item.factor,
+      });
+    };
+
     const totalCost = hierarchicalData.reduce(
-      (sum, item) => sum + (item.chf || item.totalChf || 0),
+      (sum, item) => sum + calculateItemCost(item),
       0
     );
 

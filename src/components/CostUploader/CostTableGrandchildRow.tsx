@@ -5,6 +5,7 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { CostItem } from "./types";
 import { getColumnStyle } from "./styles";
 import { useApi } from "../../contexts/ApiContext";
+import { computeRowTotal } from "../../utils/costCalculations";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -36,8 +37,7 @@ const CostTableGrandchildRow = ({
   totalElements,
 }: CostTableGrandchildRowProps) => {
   // Get the Kafka context
-  const { replaceEbkpPlaceholders, calculateUpdatedChf, formatTimestamp } =
-    useApi();
+  const { replaceEbkpPlaceholders, formatTimestamp } = useApi();
 
   // Check if this item has QTO data from MongoDB
   const hasQtoData = (item: CostItem): boolean => {
@@ -63,16 +63,12 @@ const CostTableGrandchildRow = ({
 
   // Get CHF value - calculate based on area when available
   const getChfValue = () => {
-    // If item has area from MongoDB
-    if (
-      item.area !== undefined &&
-      item.kennwert !== null &&
-      item.kennwert !== undefined
-    ) {
-      return item.area * item.kennwert;
-    }
-
-    return calculateUpdatedChf(item);
+    const quantity = item.area !== undefined ? item.area : item.menge;
+    return computeRowTotal({
+      quantity,
+      unitPrice: item.kennwert,
+      factor: item.factor,
+    });
   };
 
   // Get element count for this item
@@ -293,7 +289,7 @@ const CostTableGrandchildRow = ({
               />
             </Tooltip>
           ) : (
-            <>{renderNumber(item.totalChf)}</>
+            <>{renderNumber(getChfValue())}</>
           )}
         </Box>
       </TableCell>

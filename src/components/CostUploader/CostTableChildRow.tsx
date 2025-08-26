@@ -18,6 +18,7 @@ import { getColumnStyle, columnWidths } from "./styles";
 import { tableStyle } from "./styles";
 import CostTableGrandchildRow from "./CostTableGrandchildRow.tsx";
 import { useApi } from "../../contexts/ApiContext";
+import { computeRowTotal } from "../../utils/costCalculations";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -67,8 +68,7 @@ const CostTableChildRow = ({
   const [hasQtoInTreeState, setHasQtoInTreeState] = useState<boolean>(false);
 
   // Get the Kafka context
-  const { replaceEbkpPlaceholders, calculateUpdatedChf, formatTimestamp } =
-    useApi();
+  const { replaceEbkpPlaceholders, formatTimestamp } = useApi();
 
   // Update the hasQtoData function to check for IFC data
   const hasQtoData = (item: CostItem): boolean => {
@@ -150,17 +150,19 @@ const CostTableChildRow = ({
 
     return item.children.reduce<ChildTotals>(
       (acc, child) => {
-        // If child has direct area from MongoDB, add it
         if (child.area !== undefined) {
           acc.area += child.area;
-          acc.cost += child.area * (child.kennwert || 0);
-          acc.chf += child.area * (child.kennwert || 0);
-          // Only count elements at the leaf level (no children)
+          const rowTotal = computeRowTotal({
+            quantity: child.area,
+            unitPrice: child.kennwert,
+            factor: child.factor,
+          });
+          acc.cost += rowTotal;
+          acc.chf += rowTotal;
           if (!child.children || child.children.length === 0) {
             acc.elementCount += child.element_count || 1;
           }
         }
-        // If child has its own children (grandchildren), add their totals
         if (child.children && child.children.length > 0) {
           const childTotals = calculateTotalsFromChildren(child);
           acc.area += childTotals.area;
@@ -168,12 +170,15 @@ const CostTableChildRow = ({
           acc.chf += childTotals.chf;
           acc.elementCount += childTotals.elementCount;
         }
-        // If child has no IFC data but has a menge, add it
         if (child.area === undefined && child.menge !== undefined) {
           acc.area += child.menge || 0;
-          acc.cost += (child.menge || 0) * (child.kennwert || 0);
-          acc.chf += (child.menge || 0) * (child.kennwert || 0);
-          // Only count non-IFC items at the leaf level
+          const rowTotal = computeRowTotal({
+            quantity: child.menge || 0,
+            unitPrice: child.kennwert,
+            factor: child.factor,
+          });
+          acc.cost += rowTotal;
+          acc.chf += rowTotal;
           if (!child.children || child.children.length === 0) {
             acc.elementCount += 1;
           }
@@ -203,13 +208,16 @@ const CostTableChildRow = ({
     // Calculate total cost from grandchildren
     const { chf } = calculateTotalsFromChildren(item);
 
-    // If we have a total cost from grandchildren, use it
     if (chf > 0) {
       return chf;
     }
 
-    // Fallback to original calculation
-    return calculateUpdatedChf(item);
+    const quantity = item.area !== undefined ? item.area : item.menge;
+    return computeRowTotal({
+      quantity,
+      unitPrice: item.kennwert,
+      factor: item.factor,
+    });
   };
 
   // Get info about QTO data for this item
@@ -444,7 +452,7 @@ const CostTableChildRow = ({
                 />
               </Tooltip>
             ) : (
-              <>{renderNumber(item.totalChf)}</>
+              <>{renderNumber(getChfValue())}</>
             )}
           </Box>
         </TableCell>
