@@ -17,9 +17,9 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { CostItem } from "./types";
 import { getColumnStyle, columnWidths } from "./styles";
 import { tableStyle } from "./styles";
-import CostTableChildRow from "./CostTableChildRow.tsx";
+import CostTableChildRow from "./CostTableChildRow";
 import { useApi } from "../../contexts/ApiContext";
-import { computeItemTotal, aggregateChildTotals } from "../../utils/costTotals";
+import { computeItemTotal, aggregateChildTotals, generateItemSignature } from "../../utils/costTotals";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -168,26 +168,13 @@ const CostTableRow = ({
     return originalMenge;
   };
 
+  // Generate stable signature for deep change detection
+  const itemSignature = useMemo(() => generateItemSignature(item), [item]);
+
   // Memoized CHF calculation to avoid repeated deep traversals
   const chfValue = useMemo(() => {
     return computeItemTotal(item);
-  }, [
-    item.ebkp,
-    item.kennwert,
-    item.area,
-    item.menge,
-    item.children?.length,
-    // Include child signatures for deep changes
-    item.children && JSON.stringify(
-      item.children.map(child => ({
-        ebkp: child.ebkp,
-        kennwert: child.kennwert,
-        area: child.area,
-        menge: child.menge,
-        hasChildren: !!child.children?.length
-      }))
-    )
-  ]);
+  }, [itemSignature]); // Use stable signature to detect deep changes
 
   // Update the getChfValue function to use memoized value
   const getChfValue = (): number => {
