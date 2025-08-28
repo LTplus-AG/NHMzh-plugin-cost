@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { TableRow, TableCell, Box, Tooltip, Chip } from "@mui/material";
 import SyncIcon from "@mui/icons-material/Sync";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
@@ -61,9 +61,30 @@ const CostTableGrandchildRow = ({
     return originalMenge;
   };
 
+  // Memoized CHF calculation to avoid repeated deep traversals
+  const chfValue = useMemo(() => {
+    return computeItemTotal(item);
+  }, [
+    item.ebkp,
+    item.kennwert,
+    item.area,
+    item.menge,
+    item.children?.length,
+    // Include child signatures for deep changes
+    item.children && JSON.stringify(
+      item.children.map(child => ({
+        ebkp: child.ebkp,
+        kennwert: child.kennwert,
+        area: child.area,
+        menge: child.menge,
+        hasChildren: !!child.children?.length
+      }))
+    )
+  ]);
+
   // Get CHF value - calculate based on area when available
   const getChfValue = () => {
-    return computeItemTotal(item);
+    return chfValue;
   };
 
   // Get element count for this item

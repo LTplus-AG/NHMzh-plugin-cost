@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   TableRow,
   TableCell,
@@ -18,7 +18,7 @@ import { getColumnStyle, columnWidths } from "./styles";
 import { tableStyle } from "./styles";
 import CostTableGrandchildRow from "./CostTableGrandchildRow.tsx";
 import { useApi } from "../../contexts/ApiContext";
-import { computeItemTotal } from "../../utils/costTotals";
+import { computeItemTotal, aggregateChildTotals } from "../../utils/costTotals";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -140,29 +140,9 @@ const CostTableChildRow = ({
     return "m²";
   };
 
-  // Update the calculateTotalsFromChildren function to handle grandchild sums
-  const calculateTotalsFromChildren = (
-    item: CostItem
-  ): { area: number; elementCount: number } => {
-    if (!item.children || item.children.length === 0) {
-      return { area: 0, elementCount: 0 };
-    }
-
-    return item.children.reduce<ChildTotals>(
-      (acc, child) => {
-        if (child.children && child.children.length > 0) {
-          const childTotals = calculateTotalsFromChildren(child);
-          acc.area += childTotals.area;
-          acc.elementCount += childTotals.elementCount;
-        } else {
-          const qty = child.area ?? child.menge ?? 0;
-          acc.area += qty;
-          acc.elementCount += child.element_count || 1;
-        }
-        return acc;
-      },
-      { area: 0, elementCount: 0 }
-    );
+  // Use shared utility to calculate totals from children
+  const calculateTotalsFromChildren = (item: CostItem): ChildTotals => {
+    return aggregateChildTotals(item);
   };
 
   // Update the getMengeValue function to use grandchild sums
@@ -179,9 +159,30 @@ const CostTableChildRow = ({
     return originalMenge;
   };
 
-  // Update the getChfValue function to use grandchild sums
-  const getChfValue = () => {
+  // Memoized CHF calculation to avoid repeated deep traversals
+  const chfValue = useMemo(() => {
     return computeItemTotal(item);
+  }, [
+    item.ebkp,
+    item.kennwert,
+    item.area,
+    item.menge,
+    item.children?.length,
+    // Include child signatures for deep changes
+    item.children && JSON.stringify(
+      item.children.map(child => ({
+        ebkp: child.ebkp,
+        kennwert: child.kennwert,
+        area: child.area,
+        menge: child.menge,
+        hasChildren: !!child.children?.length
+      }))
+    )
+  ]);
+
+  // Update the getChfValue function to use memoized value
+  const getChfValue = () => {
+    return chfValue;
   };
 
   // Get info about QTO data for this item
@@ -252,13 +253,13 @@ const CostTableChildRow = ({
           backgroundColor: hasQtoData(item)
             ? "rgba(25, 118, 210, 0.03)"
             : hasQtoInTree
-            ? "rgba(25, 118, 210, 0.015)"
-            : undefined,
+              ? "rgba(25, 118, 210, 0.015)"
+              : undefined,
           borderLeft: hasQtoData(item)
             ? "2px solid rgba(25, 118, 210, 0.4)"
             : hasQtoInTree
-            ? "2px solid rgba(25, 118, 210, 0.2)"
-            : "none",
+              ? "2px solid rgba(25, 118, 210, 0.2)"
+              : "none",
         }}
       >
         <TableCell sx={{ padding: isMobile ? "8px 4px" : undefined }}>
@@ -279,12 +280,12 @@ const CostTableChildRow = ({
                 sx={
                   hasQtoInTree && !hasQtoData(item)
                     ? {
-                        color: !expanded ? "info.main" : undefined,
-                        opacity: !expanded ? 0.8 : 0.6,
-                        border: !expanded
-                          ? "1px solid rgba(25, 118, 210, 0.2)"
-                          : "none",
-                      }
+                      color: !expanded ? "info.main" : undefined,
+                      opacity: !expanded ? 0.8 : 0.6,
+                      border: !expanded
+                        ? "1px solid rgba(25, 118, 210, 0.2)"
+                        : "none",
+                    }
                     : {}
                 }
               >
