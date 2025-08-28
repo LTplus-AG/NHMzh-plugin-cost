@@ -177,17 +177,7 @@ const MainPage = () => {
 
   const [ebkpStats, setEbkpStats] = useState<EbkpStat[]>([]);
   const [kennwerte, setKennwerte] = useState<Record<string, number>>({});
-  const [quantitySelections, setQuantitySelections] = useState<Record<string, string>>(() => {
-    // Initialize quantity selections from localStorage only if a project is already selected
-    if (!selectedProject) return {};
-    try {
-      const savedSelections = localStorage.getItem(`cost-plugin-quantity-selections-${selectedProject}`);
-      return savedSelections ? JSON.parse(savedSelections) : {};
-    } catch (error) {
-      logger.warn('Failed to load saved quantity selections:', error);
-      return {};
-    }
-  });
+  const [quantitySelections, setQuantitySelections] = useState<Record<string, string>>({});
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [isLoadingKennwerte, setIsLoadingKennwerte] = useState(false);
   
@@ -253,6 +243,29 @@ const MainPage = () => {
       setIsLoadingKennwerte(false);
     }
   }, [selectedProject, loadKennwerteFromBackend]);
+
+  // Load quantity selections from localStorage when project changes
+  useEffect(() => {
+    if (selectedProject) {
+      try {
+        const savedSelections = localStorage.getItem(`cost-plugin-quantity-selections-${selectedProject}`);
+        if (savedSelections) {
+          const parsedSelections = JSON.parse(savedSelections);
+          setQuantitySelections({ ...parsedSelections }); // Create new object reference
+          logger.info(`Loaded ${Object.keys(parsedSelections).length} quantity selections from localStorage for project ${selectedProject}`);
+        } else {
+          // No saved selections, initialize empty
+          setQuantitySelections({ ...{} }); // Create new object reference
+        }
+      } catch (error) {
+        logger.warn('Failed to load saved quantity selections:', error);
+        setQuantitySelections({ ...{} }); // Create new object reference
+      }
+    } else {
+      // No project selected, clear quantity selections
+      setQuantitySelections({});
+    }
+  }, [selectedProject]);
 
   // Function to save kennwerte to backend database
   const saveKennwerteToBackend = useCallback(async (projectName: string, kennwerteData: Record<string, number>) => {
@@ -360,8 +373,8 @@ const MainPage = () => {
             });
           }
 
-          const statMap: Record<string, { 
-            quantity: number; 
+          const statMap: Record<string, {
+            quantity: number;
             unit?: string;
             availableQuantities?: Array<{ value: number; type: string; unit: string; label: string }>;
             selectedQuantityType?: string;
@@ -488,7 +501,7 @@ const MainPage = () => {
       setEbkpStats([]);
       setModelMetadata(null);
     }
-  }, [selectedProject, fetchElementsForProject]);
+  }, [selectedProject, fetchElementsForProject, quantitySelections]);
 
   const handleProjectChange = (event: SelectChangeEvent<string>) => {
     const newProjectName = event.target.value;

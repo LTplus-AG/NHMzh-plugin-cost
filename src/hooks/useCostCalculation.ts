@@ -33,11 +33,23 @@ export const useCostCalculation = (
     }
 
     // Calculate totalCost by summing ONLY the top-level items.
-    // EbkpMapper.recalculateParentTotals should have already aggregated children totals into these parents.
-    const totalCost = hierarchicalData.reduce(
-      (sum, item) => sum + (item.chf || item.totalChf || 0),
-      0
-    );
+    // Prefer the explicit total (totalChf). If absent, fall back to
+    // quantity × unit cost, and finally to chf. Use nullish checks so 0 is valid.
+    const totalCost = hierarchicalData.reduce((sum, item) => {
+      const fromTotal = item.totalChf ?? null;
+      const fromQtyUnit =
+        item.menge != null && item.kennwert != null
+          ? item.menge * item.kennwert
+          : null;
+      const fromChf = item.chf ?? null;
+
+      const itemTotal =
+        (fromTotal != null ? fromTotal : null) ??
+        (fromQtyUnit != null ? fromQtyUnit : null) ??
+        (fromChf != null ? fromChf : 0);
+
+      return sum + (typeof itemTotal === "number" ? itemTotal : 0);
+    }, 0);
 
     // We still might want the flat list for other purposes, so calculate it separately.
     const flatItems = getAllItems(hierarchicalData);

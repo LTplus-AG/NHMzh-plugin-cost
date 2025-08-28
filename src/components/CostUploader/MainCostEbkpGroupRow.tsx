@@ -135,11 +135,34 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
             </Box>
           </TableCell>
           <TableCell sx={{ py: 2, textAlign: "right" }}>
-            <Typography variant="body2" sx={{ 
+            <Typography variant="body2" sx={{
               fontWeight: hasZeroQuantity ? 'bold' : 'medium',
               color: hasZeroQuantity ? 'warning.main' : 'inherit'
             }}>
-              {formatQuantity(group.totalQuantity)} m²
+              {(() => {
+                // Determine the most common unit among subGroups
+                const unitCounts = new Map<string, number>();
+                group.subGroups.forEach(subGroup => {
+                  const selectedType = subGroup.selectedQuantityType || subGroup.availableQuantities[0]?.type;
+                  const selectedQty = subGroup.availableQuantities.find(q => q.type === selectedType);
+                  if (selectedQty) {
+                    const count = unitCounts.get(selectedQty.unit) || 0;
+                    unitCounts.set(selectedQty.unit, count + 1);
+                  }
+                });
+
+                // Get the most common unit
+                let mostCommonUnit = 'm²'; // default fallback
+                let maxCount = 0;
+                unitCounts.forEach((count, unit) => {
+                  if (count > maxCount) {
+                    maxCount = count;
+                    mostCommonUnit = unit;
+                  }
+                });
+
+                return `${formatQuantity(group.totalQuantity)} ${mostCommonUnit}`;
+              })()}
             </Typography>
           </TableCell>
           <TableCell sx={{ py: 2, textAlign: "right" }}>

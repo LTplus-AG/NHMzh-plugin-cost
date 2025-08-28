@@ -21,14 +21,21 @@ export function computeItemTotal(item: CostItem): number {
     // Compute children first (will be cached individually)
     const childTotals: number[] = [];
     const childVersions: number[] = [];
+    const childSigs: string[] = [];
     for (const child of item.children as CostItem[]) {
       childTotals.push(computeItemTotal(child));
       const childEntry = itemTotalCache.get(child);
       childVersions.push(childEntry?.version ?? 0);
+      if (childEntry?.signature) {
+        childSigs.push(childEntry.signature);
+      } else {
+        // Rare fallback: child entry should exist after computeItemTotal(child)
+        childSigs.push(generateItemSignature(child));
+      }
     }
 
     const total = childTotals.reduce((sum, t) => sum + t, 0);
-    const signature = `g|c:${childVersions.join(',')}|len:${childVersions.length}`;
+    const signature = `g|cs:[${childSigs.sort().join(',')}]|len:${childVersions.length}`;
 
     const cached = itemTotalCache.get(item);
     if (cached && cached.signature === signature) {
