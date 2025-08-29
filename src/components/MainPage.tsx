@@ -31,83 +31,9 @@ import EmptyState from "./ui/EmptyState";
 import { Upload as UploadIcon, Assessment as AssessmentIcon } from "@mui/icons-material";
 import { navigateToIfcUploader, navigateToQto, getCurrentPlugin } from "../utils/navigation";
 import logger from '../utils/logger';
+import { getAvailableQuantities, getSelectedQuantity } from '../utils/quantityUtils';
 
-const getAvailableQuantities = (el: MongoElement) => {
-  const quantities = [];
 
-  if (el.available_quantities && el.available_quantities.length > 0) {
-    return el.available_quantities;
-  }
-
-  const elAny = el as MongoElement & { area?: number; length?: number; volume?: number };
-
-  if (elAny.area && elAny.area > 0) {
-    quantities.push({
-      value: elAny.area,
-      type: "area",
-      unit: "m²",
-      label: "Area"
-    });
-  }
-
-  if (elAny.length && elAny.length > 0) {
-    quantities.push({
-      value: elAny.length,
-      type: "length",
-      unit: "m",
-      label: "Length"
-    });
-  }
-
-  if (elAny.volume && elAny.volume > 0) {
-    quantities.push({
-      value: elAny.volume,
-      type: "volume",
-      unit: "m³",
-      label: "Volume"
-    });
-  }
-
-  if (quantities.length === 0 || !quantities.some(q => q.type === 'count')) {
-    quantities.push({
-      value: 1,
-      type: "count",
-      unit: "Stk",
-      label: "Count"
-    });
-  }
-
-  return quantities;
-};
-
-const getSelectedQuantity = (
-  el: MongoElement,
-  selectedType?: string
-): { value: number; unit: string; type: string } => {
-  const availableQuantities = getAvailableQuantities(el);
-
-  if (availableQuantities.length === 0) {
-    return { value: 1, unit: "Stk", type: "count" };
-  }
-
-  if (selectedType) {
-    const selected = availableQuantities.find(q => q.type === selectedType);
-    if (selected) {
-      return {
-        value: selected.value,
-        unit: selected.unit,
-        type: selected.type
-      };
-    }
-  }
-
-  const defaultQty = availableQuantities[0];
-  return {
-    value: defaultQty.value,
-    unit: defaultQty.unit,
-    type: defaultQty.type
-  };
-};
 
 const formatCurrency = (value: number): string => {
   // For values under 10,000, show with 2 decimal places
@@ -179,7 +105,7 @@ const MainPage = () => {
 
   const [ebkpStats, setEbkpStats] = useState<EbkpStat[]>([]);
   const [kennwerte, setKennwerte] = useState<Record<string, number>>({});
-  const [quantitySelections, setQuantitySelections] = useState<Record<string, QuantityType>>({});
+  const [quantitySelections, setQuantitySelections] = useState<Record<string, string>>({});
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [isLoadingKennwerte, setIsLoadingKennwerte] = useState(false);
 
@@ -205,7 +131,15 @@ const MainPage = () => {
   // Function to load kennwerte from backend database
   const loadKennwerteFromBackend = useCallback(async (projectName: string) => {
     try {
-      const response = await fetch(`${backendUrl}/get-kennwerte/${encodeURIComponent(projectName)}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
+      const response = await fetch(`${backendUrl}/get-kennwerte/${encodeURIComponent(projectName)}`, {
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         const data = await response.json();
         if (data.kennwerte && Object.keys(data.kennwerte).length > 0) {
@@ -276,6 +210,9 @@ const MainPage = () => {
   // Function to save kennwerte to backend database
   const saveKennwerteToBackend = useCallback(async (projectName: string, kennwerteData: Record<string, number>) => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
       const response = await fetch(`${backendUrl}/save-kennwerte`, {
         method: "POST",
         headers: {
@@ -285,7 +222,10 @@ const MainPage = () => {
           projectName,
           kennwerte: kennwerteData,
         }),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         await response.json();
@@ -311,7 +251,7 @@ const MainPage = () => {
     }, 1500); // Increased debounce to 1500ms to avoid too many saves
 
     return () => clearTimeout(timeoutId);
-  }, [kennwerte, selectedProject, saveKennwerteToBackend]);
+  }, [kennwerte, selectedProject, saveKennwerteToBackend, isLoadingKennwerte]);
 
   // Save quantity selections to localStorage whenever they change (project-specific)
   useEffect(() => {
@@ -471,7 +411,7 @@ const MainPage = () => {
         setLoadingElements(false);
       }
     },
-    [backendUrl, quantitySelections]
+    [backendUrl, quantitySelections, selectedProject]
   );
 
   useEffect(() => {
@@ -479,7 +419,15 @@ const MainPage = () => {
       const fetchProjects = async () => {
         setLoadingProjects(true);
         try {
-          const response = await fetch(`${backendUrl}/projects`);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
+          const response = await fetch(`${backendUrl}/projects`, {
+            signal: controller.signal
+          });
+
+          clearTimeout(timeoutId);
+
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
           }
@@ -497,7 +445,7 @@ const MainPage = () => {
       };
       fetchProjects();
     }
-  }, [backendUrl]);
+  }, [backendUrl, selectedProject, fetchElementsForProject]);
 
   useEffect(() => {
     if (selectedProject) {
@@ -618,11 +566,17 @@ const MainPage = () => {
     logger.info("Kafka message being sent:", kafkaMessage);
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
       const response = await fetch(`${backendUrl}/confirm-costs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(kafkaMessage),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         logger.info("Cost data confirmed and sent to Kafka.");
@@ -637,7 +591,7 @@ const MainPage = () => {
   };
 
   const recalculateStats = useCallback(
-    (newQuantitySelections: Record<string, QuantityType>) => {
+    (newQuantitySelections: Record<string, string>) => {
       if (currentElements.length === 0) return;
 
       const statMap: Record<string, {
@@ -715,7 +669,7 @@ const MainPage = () => {
       setEbkpStats(stats);
     }, [currentElements]);
 
-  const handleQuantityTypeChange = useCallback((code: string, quantityType: QuantityType) => {
+  const handleQuantityTypeChange = useCallback((code: string, quantityType: string) => {
 
     const newSelections = {
       ...quantitySelections,

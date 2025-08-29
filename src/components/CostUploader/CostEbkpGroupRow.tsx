@@ -11,6 +11,7 @@ import {
   Collapse,
   FormControl,
   IconButton,
+  InputAdornment,
   MenuItem,
   Select,
   SelectChangeEvent,
@@ -145,7 +146,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   // Memoize filtered and sorted elements for performance
   const processedElements = useMemo(() => {
     // Filter elements if showing only failing ones
-    let filteredElements = showOnlyFailing
+    const filteredElements = showOnlyFailing
       ? group.elements.filter(element => isZeroQuantity(getElementQuantityValue(element, selectedQuantityType)))
       : [...group.elements];
 
@@ -262,7 +263,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
           <TableCell sx={{ py: 1.5, textAlign: "right" }}>
             <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 0.5 }}>
               <Typography variant="body2" sx={{
-                fontWeight: hasZeroQuantity ? 'bold' : 'medium',
+                fontWeight: hasZeroQuantity ? 'bold' : 500,
                 color: hasZeroQuantity ? 'warning.main' : 'inherit'
               }}>
                 {formatQuantity(selectedQuantity.value)} {selectedQuantity.unit}
@@ -299,7 +300,11 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
               size="small"
               sx={{ width: 120 }}
               InputProps={{
-                endAdornment: <Typography variant="caption" color="text.secondary">CHF</Typography>,
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Typography variant="caption" color="text.secondary">CHF</Typography>
+                  </InputAdornment>
+                ),
               }}
             />
           </TableCell>
@@ -377,7 +382,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                   <Typography variant="caption" sx={{
                                     color: elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
-                                    fontWeight: elementHasZeroQuantity ? 'bold' : 'medium',
+                                    fontWeight: elementHasZeroQuantity ? 'bold' : 500,
                                     fontSize: '0.8rem'
                                   }}>
                                     {element.type_name || element.ifc_class || 'Unknown'}
@@ -409,6 +414,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                     <Tooltip title={`GUID kopieren: ${element.global_id}`} arrow>
                                       <IconButton
                                         size="small"
+                                        aria-label={`GUID kopieren${element.global_id ? `: ${element.global_id}` : ''}`}
                                         onClick={() => {
                                           if (element.global_id) {
                                             copyToClipboard(element.global_id);

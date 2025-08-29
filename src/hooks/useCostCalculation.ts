@@ -4,7 +4,7 @@ import { computeItemTotal } from "../utils/costTotals";
 
 // Helper function to get all items from a hierarchical structure (recursive)
 const getAllItems = (items: CostItem[]): CostItem[] => {
-  let result: CostItem[] = [];
+  const result: CostItem[] = [];
   for (const item of items) {
     result.push(item);
     if (item.children && item.children.length > 0) {
@@ -21,7 +21,7 @@ interface CostCalculationResult {
 
 /**
  * Custom hook to calculate total cost from hierarchical CostItem data.
- * Sums top-level items using: totalChf → (menge × kennwert) → chf (nullish-aware to keep 0).
+ * Sums top-level items using centralized logic: groups = sum(children); leaves = (area || menge) × kennwert.
  * @param hierarchicalData The hierarchical array of CostItems.
  * @returns An object containing the totalCost and the flatItems array.
  */

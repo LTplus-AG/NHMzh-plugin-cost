@@ -36,7 +36,7 @@ import React, { useMemo, useState } from "react";
 import { useEbkpGroups } from "../hooks/useEbkpGroups";
 import { MongoElement } from "../types/common.types";
 import { getZeroQuantityStyles } from "../utils/zeroQuantityHighlight";
-import { hasElementMissingQuantity } from '../utils/quantityUtils';
+import { hasElementMissingQuantity, quantityTypeLabel, quantityTypeCalculationLabel } from '../utils/quantityUtils';
 import MainCostEbkpGroupRow from "./CostUploader/MainCostEbkpGroupRow";
 
 export interface EbkpStat {
@@ -583,10 +583,7 @@ const EbkpCostForm: React.FC<Props> = ({
               >
                 {uniqueQuantityTypes.map((type) => (
                   <MenuItem key={type} value={type}>
-                    {type === 'area' ? 'Fläche' :
-                      type === 'length' ? 'Länge' :
-                        type === 'volume' ? 'Volumen' :
-                          type === 'count' ? 'Stück' : type}
+                    {quantityTypeLabel(type)}
                   </MenuItem>
                 ))}
               </Select>
@@ -765,7 +762,6 @@ const EbkpCostForm: React.FC<Props> = ({
                       p: 3,
                       transition: 'all 0.3s ease-in-out',
                       '&:hover': {
-                        elevation: 4,
                         transform: 'translateY(-2px)',
                         boxShadow: '0 8px 25px rgba(0,0,0,0.15)'
                       },
@@ -815,7 +811,7 @@ const EbkpCostForm: React.FC<Props> = ({
 
                       {/* Quantity Selection */}
                       <Box sx={{ flex: 1, minWidth: 300 }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 500 }}>
                           Mengenauswahl
                         </Typography>
                         {group.availableQuantities && group.availableQuantities.length > 1 ? (
@@ -850,14 +846,11 @@ const EbkpCostForm: React.FC<Props> = ({
                                 return (
                                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
                                     <Box sx={{ flex: 1 }}>
-                                      <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
                                         {selected.label}
                                       </Typography>
                                       <Typography variant="caption" color="text.secondary">
-                                        {selected.type === 'area' ? 'Flächenberechnung' :
-                                          selected.type === 'length' ? 'Längenberechnung' :
-                                            selected.type === 'volume' ? 'Volumenberechnung' :
-                                              selected.type === 'count' ? 'Stückzahl' : 'Andere'}
+                                        {quantityTypeCalculationLabel(selected.type)}
                                       </Typography>
                                     </Box>
                                     <Chip
@@ -892,14 +885,11 @@ const EbkpCostForm: React.FC<Props> = ({
                                 >
                                   <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
                                     <Box>
-                                      <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
                                         {qty.label}
                                       </Typography>
                                       <Typography variant="caption" color="text.secondary">
-                                        {qty.type === 'area' ? 'Flächenberechnung' :
-                                          qty.type === 'length' ? 'Längenberechnung' :
-                                            qty.type === 'volume' ? 'Volumenberechnung' :
-                                              qty.type === 'count' ? 'Stückzahl' : 'Andere'}
+                                        {quantityTypeCalculationLabel(qty.type)}
                                       </Typography>
                                     </Box>
                                     <Chip
@@ -926,7 +916,7 @@ const EbkpCostForm: React.FC<Props> = ({
                             justifyContent: 'space-between'
                           }}>
                             <Box>
-                              <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                              <Typography variant="body2" sx={{ fontWeight: 500 }}>
                                 {group.availableQuantities[0].label}
                               </Typography>
                               <Typography variant="caption" color="text.secondary">
@@ -962,7 +952,7 @@ const EbkpCostForm: React.FC<Props> = ({
 
                       {/* Cost Input and Calculation */}
                       <Box sx={{ minWidth: 200 }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 500 }}>
                           Kennwert (CHF)
                         </Typography>
                         <TextField
@@ -990,7 +980,7 @@ const EbkpCostForm: React.FC<Props> = ({
 
                       {/* Total Cost Display */}
                       <Box sx={{ minWidth: 150, textAlign: 'right' }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 500 }}>
                           Gesamtkosten
                         </Typography>
                         <Box sx={{

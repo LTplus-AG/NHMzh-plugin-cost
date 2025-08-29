@@ -112,7 +112,7 @@ const CostTableRow = ({
     if (qtoInTree !== hasQtoInTreeState) {
       setHasQtoInTreeState(qtoInTree);
     }
-  }, [item, hasQtoState, hasQtoInTreeState]);
+  }, [item, hasQtoState, hasQtoInTreeState, qtoInTree]);
 
   // Use state values for rendering
   const hasQtoInTree = hasQtoInTreeState;
@@ -174,7 +174,7 @@ const CostTableRow = ({
   // Memoized CHF calculation to avoid repeated deep traversals
   const chfValue = useMemo(() => {
     return computeItemTotal(item);
-  }, [itemSignature]); // Use stable signature to detect deep changes
+  }, [item, itemSignature]); // Use stable signature to detect deep changes
 
   // Update the getChfValue function to use memoized value
   const getChfValue = (): number => {

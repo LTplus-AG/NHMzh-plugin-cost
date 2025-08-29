@@ -88,7 +88,7 @@ const SmartExcelButton: React.FC<Props> = ({
     handleClose();
     try {
       await onExport();
-    } catch (error) {
+    } catch {
       setProcessState('error');
       setToastMessage('Export fehlgeschlagen. Bitte versuchen Sie es erneut.');
       setToastSeverity('error');
@@ -160,9 +160,9 @@ const SmartExcelButton: React.FC<Props> = ({
     <>
       <Box sx={{ position: 'relative' }}>
         <ButtonGroup variant="outlined" size="medium">
-          <Tooltip 
+          <Tooltip
             title={
-              hasActivity 
+              hasActivity
                 ? `${exportCount} Exporte, ${importCount} Importe`
                 : 'Excel Export/Import'
             }
@@ -227,12 +227,12 @@ const SmartExcelButton: React.FC<Props> = ({
             sx: {
               mt: 1,
               minWidth: 320,
-              boxShadow: (theme) => theme.palette.mode === 'dark' 
-                ? '0 8px 32px rgba(0,0,0,0.8)' 
+              boxShadow: (theme) => theme.palette.mode === 'dark'
+                ? '0 8px 32px rgba(0,0,0,0.8)'
                 : '0 8px 32px rgba(0,0,0,0.12)',
               border: '1px solid',
-              borderColor: (theme) => theme.palette.mode === 'dark' 
-                ? 'rgba(255, 255, 255, 0.23)' 
+              borderColor: (theme) => theme.palette.mode === 'dark'
+                ? 'rgba(255, 255, 255, 0.23)'
                 : 'divider'
             }
           }}
@@ -250,7 +250,7 @@ const SmartExcelButton: React.FC<Props> = ({
             <ListItemIcon>
               <FileDownload color="primary" />
             </ListItemIcon>
-            <ListItemText 
+            <ListItemText
               primary="Nach Excel exportieren"
               secondary="Direkt herunterladen - keine weitere Konfiguration nötig"
             />
@@ -260,7 +260,7 @@ const SmartExcelButton: React.FC<Props> = ({
             <ListItemIcon>
               <FileUpload color="secondary" />
             </ListItemIcon>
-            <ListItemText 
+            <ListItemText
               primary="Aus Excel importieren"
               secondary="Datei auswählen und Vorschau anzeigen"
             />
@@ -268,44 +268,44 @@ const SmartExcelButton: React.FC<Props> = ({
 
           {(lastExportTime || lastImportTime) && (
             <>
-              <Box sx={{ 
-                px: 2, 
-                py: 1.5, 
-                backgroundColor: (theme) => theme.palette.mode === 'dark' 
-                  ? 'rgba(255, 255, 255, 0.08)' 
+              <Box sx={{
+                px: 2,
+                py: 1.5,
+                backgroundColor: (theme) => theme.palette.mode === 'dark'
+                  ? 'rgba(255, 255, 255, 0.08)'
                   : 'grey.50',
-                borderTop: '1px solid', 
-                borderColor: (theme) => theme.palette.mode === 'dark' 
-                  ? 'rgba(255, 255, 255, 0.23)' 
-                  : 'divider' 
+                borderTop: '1px solid',
+                borderColor: (theme) => theme.palette.mode === 'dark'
+                  ? 'rgba(255, 255, 255, 0.23)'
+                  : 'divider'
               }}>
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mb: 1, display: 'block' }}>
                   Letzte Aktivität
                 </Typography>
-                
+
                 {lastExportTime && (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                     <FileDownload sx={{ fontSize: 14, color: 'text.secondary' }} />
                     <Typography variant="caption" color="text.secondary">
-                      Export: {lastExportTime.toLocaleString('de-DE', { 
-                        day: '2-digit', 
-                        month: '2-digit', 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
+                      Export: {lastExportTime.toLocaleString('de-DE', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
                       })}
                     </Typography>
                   </Box>
                 )}
-                
+
                 {lastImportTime && (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <FileUpload sx={{ fontSize: 14, color: 'text.secondary' }} />
                     <Typography variant="caption" color="text.secondary">
-                      Import: {lastImportTime.toLocaleString('de-DE', { 
-                        day: '2-digit', 
-                        month: '2-digit', 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
+                      Import: {lastImportTime.toLocaleString('de-DE', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
                       })}
                     </Typography>
                   </Box>
@@ -334,9 +334,9 @@ const SmartExcelButton: React.FC<Props> = ({
         onClose={handleToastClose}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
-        <Alert 
-          onClose={handleToastClose} 
-          severity={toastSeverity} 
+        <Alert
+          onClose={handleToastClose}
+          severity={toastSeverity}
           variant="filled"
           sx={{ width: '100%' }}
         >
