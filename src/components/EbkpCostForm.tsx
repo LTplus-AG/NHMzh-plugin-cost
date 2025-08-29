@@ -80,11 +80,11 @@ interface GroupedData {
   selectedQuantityType?: string;
 }
 
-const EbkpCostForm: React.FC<Props> = ({ 
-  stats, 
-  kennwerte, 
-  onKennwertChange, 
-  onQuantityTypeChange, 
+const EbkpCostForm: React.FC<Props> = ({
+  stats,
+  kennwerte,
+  onKennwertChange,
+  onQuantityTypeChange,
   elements = []
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
@@ -94,28 +94,28 @@ const EbkpCostForm: React.FC<Props> = ({
   const [groupingStrategy, setGroupingStrategy] = useState<GroupingStrategy>('ebkp');
   const [quantityTypeFilter, setQuantityTypeFilter] = useState<string[]>([]);
   const [hasKennwertFilter, setHasKennwertFilter] = useState<'all' | 'with' | 'without'>('all');
-  
+
   // Hierarchical table state
   const [expandedMainGroups, setExpandedMainGroups] = useState<string[]>([]);
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
-  
+
   // Use hierarchical groups hook for EBKP grouping
   const { ebkpGroups, hierarchicalGroups } = useEbkpGroups(stats, kennwerte);
-  
+
 
 
   // Expand/collapse functionality
   const toggleMainGroup = (mainGroup: string) => {
-    setExpandedMainGroups(prev => 
-      prev.includes(mainGroup) 
+    setExpandedMainGroups(prev =>
+      prev.includes(mainGroup)
         ? prev.filter(g => g !== mainGroup)
         : [...prev, mainGroup]
     );
   };
 
   const toggleEbkpGroup = (code: string) => {
-    setExpandedEbkp(prev => 
-      prev.includes(code) 
+    setExpandedEbkp(prev =>
+      prev.includes(code)
         ? prev.filter(c => c !== code)
         : [...prev, code]
     );
@@ -125,18 +125,18 @@ const EbkpCostForm: React.FC<Props> = ({
   const areAllGroupsExpanded = useMemo(() => {
     if (hierarchicalGroups) {
       // Check if all main groups are expanded
-      const allMainGroupsExpanded = hierarchicalGroups.every(group => 
+      const allMainGroupsExpanded = hierarchicalGroups.every(group =>
         expandedMainGroups.includes(group.mainGroup)
       );
-      
+
       // Check if all sub-groups are expanded
-      const allSubGroupsCodes = hierarchicalGroups.flatMap(group => 
+      const allSubGroupsCodes = hierarchicalGroups.flatMap(group =>
         group.subGroups.map(subGroup => subGroup.code)
       );
-      const allSubGroupsExpanded = allSubGroupsCodes.every(code => 
+      const allSubGroupsExpanded = allSubGroupsCodes.every(code =>
         expandedEbkp.includes(code)
       );
-      
+
       return allMainGroupsExpanded && allSubGroupsExpanded;
     } else {
       // For flat view, check if all EBKP groups are expanded
@@ -153,7 +153,7 @@ const EbkpCostForm: React.FC<Props> = ({
       // Expand all
       if (hierarchicalGroups) {
         const allMainGroups = hierarchicalGroups.map(group => group.mainGroup);
-        const allSubGroupsCodes = hierarchicalGroups.flatMap(group => 
+        const allSubGroupsCodes = hierarchicalGroups.flatMap(group =>
           group.subGroups.map(subGroup => subGroup.code)
         );
         setExpandedMainGroups(allMainGroups);
@@ -169,7 +169,7 @@ const EbkpCostForm: React.FC<Props> = ({
   // Helper function to check if a group has missing quantities
   const hasGroupMissingQuantities = (group: GroupedData): boolean => {
     const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
-    
+
     return group.elements.some(element => {
       return hasElementMissingQuantity(element, selectedQuantityType);
     });
@@ -189,10 +189,10 @@ const EbkpCostForm: React.FC<Props> = ({
     }
 
     const groups = new Map<string, MongoElement[]>();
-    
+
     elements.forEach((element) => {
       let groupKey = '';
-      
+
       switch (groupingStrategy) {
         case 'ifc_class':
           groupKey = element.ifc_class || 'Unknown';
@@ -212,7 +212,7 @@ const EbkpCostForm: React.FC<Props> = ({
         default:
           groupKey = 'Unknown';
       }
-      
+
       if (!groups.has(groupKey)) {
         groups.set(groupKey, []);
       }
@@ -221,9 +221,9 @@ const EbkpCostForm: React.FC<Props> = ({
 
     const result = Array.from(groups.entries()).map(([groupKey, groupElements]) => {
       const availableQuantities = new Map<string, { value: number; unit: string; label: string }>();
-      
-              groupElements.forEach((element) => {
-          if (element.available_quantities && element.available_quantities.length > 0) {
+
+      groupElements.forEach((element) => {
+        if (element.available_quantities && element.available_quantities.length > 0) {
           element.available_quantities.forEach(qty => {
             const existing = availableQuantities.get(qty.type);
             if (existing) {
@@ -236,8 +236,8 @@ const EbkpCostForm: React.FC<Props> = ({
               });
             }
           });
-                  } else {
-            const elementAny = element as MongoElement & { area?: number; length?: number; volume?: number };
+        } else {
+          const elementAny = element as MongoElement & { area?: number; length?: number; volume?: number };
           if (elementAny.area && elementAny.area > 0) {
             const existing = availableQuantities.get('area');
             if (existing) {
@@ -250,8 +250,8 @@ const EbkpCostForm: React.FC<Props> = ({
               });
             }
           }
-          
-          
+
+
           if (elementAny.length && elementAny.length > 0) {
             const existing = availableQuantities.get('length');
             if (existing) {
@@ -264,8 +264,8 @@ const EbkpCostForm: React.FC<Props> = ({
               });
             }
           }
-          
-          
+
+
           if (elementAny.volume && elementAny.volume > 0) {
             const existing = availableQuantities.get('volume');
             if (existing) {
@@ -281,13 +281,13 @@ const EbkpCostForm: React.FC<Props> = ({
         }
       });
 
-              if (!availableQuantities.has('count')) {
-          availableQuantities.set('count', {
-            value: groupElements.length,
-            unit: 'Stk',
-            label: 'Count'
-          });
-        }
+      if (!availableQuantities.has('count')) {
+        availableQuantities.set('count', {
+          value: groupElements.length,
+          unit: 'Stk',
+          label: 'Count'
+        });
+      }
 
       const finalQuantities = Array.from(availableQuantities.entries()).map(([type, data]) => ({
         value: data.value,
@@ -308,7 +308,7 @@ const EbkpCostForm: React.FC<Props> = ({
 
       return groupData;
     });
-    
+
     return result;
   }, [stats, elements, groupingStrategy]);
 
@@ -332,34 +332,34 @@ const EbkpCostForm: React.FC<Props> = ({
   }, [groupedData]);
 
   const filteredAndSortedData = useMemo(() => {
-          const filtered = groupedData.filter(group => {
-        if (searchTerm) {
+    const filtered = groupedData.filter(group => {
+      if (searchTerm) {
         const searchLower = searchTerm.toLowerCase();
         const matchesGroup = group.displayName.toLowerCase().includes(searchLower) ||
-                           group.groupKey.toLowerCase().includes(searchLower);
-        const matchesQuantityType = group.availableQuantities.some(qty => 
-          qty.type.toLowerCase().includes(searchLower) || 
+          group.groupKey.toLowerCase().includes(searchLower);
+        const matchesQuantityType = group.availableQuantities.some(qty =>
+          qty.type.toLowerCase().includes(searchLower) ||
           qty.label.toLowerCase().includes(searchLower)
         );
-        
+
         if (!matchesGroup && !matchesQuantityType) {
           return false;
         }
       }
 
-              if (quantityTypeFilter.length > 0) {
-        const hasFilteredType = group.availableQuantities.some(qty => 
+      if (quantityTypeFilter.length > 0) {
+        const hasFilteredType = group.availableQuantities.some(qty =>
           quantityTypeFilter.includes(qty.type)
         );
-        
+
         if (!hasFilteredType) {
           return false;
         }
       }
 
-              if (hasKennwertFilter !== 'all') {
+      if (hasKennwertFilter !== 'all') {
         const hasKennwert = kennwerte[group.groupKey] && kennwerte[group.groupKey] > 0;
-        
+
         if (hasKennwertFilter === 'with' && !hasKennwert) {
           return false;
         }
@@ -376,13 +376,13 @@ const EbkpCostForm: React.FC<Props> = ({
       // First priority: groups with missing quantities should come first
       const aMissingQuantities = hasGroupMissingQuantities(a);
       const bMissingQuantities = hasGroupMissingQuantities(b);
-      
+
       if (aMissingQuantities && !bMissingQuantities) return -1; // a comes first
       if (!aMissingQuantities && bMissingQuantities) return 1;  // b comes first
-      
+
       // If both have same missing quantity status, sort by the selected field
       let aValue: string | number, bValue: string | number;
-      
+
       switch (sortField) {
         case 'group':
           aValue = a.displayName;
@@ -409,7 +409,7 @@ const EbkpCostForm: React.FC<Props> = ({
       }
 
       if (typeof aValue === 'string' && typeof bValue === 'string') {
-        return sortDirection === 'asc' 
+        return sortDirection === 'asc'
           ? aValue.localeCompare(bValue)
           : bValue.localeCompare(aValue);
       }
@@ -417,7 +417,7 @@ const EbkpCostForm: React.FC<Props> = ({
       // Convert to numbers for arithmetic operations
       const numA = typeof aValue === 'number' ? aValue : 0;
       const numB = typeof bValue === 'number' ? bValue : 0;
-      
+
       if (sortDirection === 'asc') {
         return numA - numB;
       } else {
@@ -459,11 +459,11 @@ const EbkpCostForm: React.FC<Props> = ({
         <Typography variant="h6" color="primary">
           Kennwerte nach {
             groupingStrategy === 'ebkp' ? 'eBKP' :
-            groupingStrategy === 'ifc_class' ? 'IFC-Klasse' :
-            groupingStrategy === 'type_name' ? 'Typ-Name' :
-            groupingStrategy === 'level' ? 'Ebene' :
-            groupingStrategy === 'material' ? 'Material' :
-            groupingStrategy === 'structural' ? 'Tragwerk' : 'Gruppe'
+              groupingStrategy === 'ifc_class' ? 'IFC-Klasse' :
+                groupingStrategy === 'type_name' ? 'Typ-Name' :
+                  groupingStrategy === 'level' ? 'Ebene' :
+                    groupingStrategy === 'material' ? 'Material' :
+                      groupingStrategy === 'structural' ? 'Tragwerk' : 'Gruppe'
           }
         </Typography>
       </Box>
@@ -487,7 +487,7 @@ const EbkpCostForm: React.FC<Props> = ({
               <MenuItem value="structural">Tragwerk</MenuItem>
             </Select>
           </FormControl>
-          
+
           <Typography variant="body2" color="text.secondary">
             {filteredAndSortedData.length} Gruppen
           </Typography>
@@ -583,10 +583,10 @@ const EbkpCostForm: React.FC<Props> = ({
               >
                 {uniqueQuantityTypes.map((type) => (
                   <MenuItem key={type} value={type}>
-                    {type === 'area' ? 'Fläche' : 
-                     type === 'length' ? 'Länge' : 
-                     type === 'volume' ? 'Volumen' : 
-                     type === 'count' ? 'Stück' : type}
+                    {type === 'area' ? 'Fläche' :
+                      type === 'length' ? 'Länge' :
+                        type === 'volume' ? 'Volumen' :
+                          type === 'count' ? 'Stück' : type}
                   </MenuItem>
                 ))}
               </Select>
@@ -633,16 +633,16 @@ const EbkpCostForm: React.FC<Props> = ({
             <Typography variant="body2" color="text.secondary">
               Sortiert nach {
                 sortField === 'group' ? 'Gruppe' :
-                sortField === 'quantity' ? 'Menge' :
-                sortField === 'cost' ? 'Gesamtkosten' :
-                sortField === 'kennwert' ? 'Kennwert' :
-                sortField === 'element_count' ? 'Anzahl' : sortField
+                  sortField === 'quantity' ? 'Menge' :
+                    sortField === 'cost' ? 'Gesamtkosten' :
+                      sortField === 'kennwert' ? 'Kennwert' :
+                        sortField === 'element_count' ? 'Anzahl' : sortField
               } {sortDirection === 'asc' ? '↑' : '↓'}
             </Typography>
             {(() => {
               const groupsWithMissingQuantities = filteredAndSortedData.filter(group => hasGroupMissingQuantities(group)).length;
               return groupsWithMissingQuantities > 0 ? (
-                <Chip 
+                <Chip
                   label={`${groupsWithMissingQuantities} mit fehlenden Mengen`}
                   size="small"
                   color="warning"
@@ -748,287 +748,287 @@ const EbkpCostForm: React.FC<Props> = ({
               )}
             </Paper>
           ) : (
-          filteredAndSortedData.map((group) => {
-            const selectedQuantity = getSelectedQuantity(group);
-            const hasZeroQuantity = hasGroupMissingQuantities(group);
-            
-            return (
-              <Tooltip 
-                key={group.groupKey}
-                title={hasZeroQuantity ? `Enthält Elemente ohne ${selectedQuantity.label || selectedQuantity.type} - Gruppe ${group.displayName}` : ''}
-                arrow
-                placement="left"
-              >
-                <Paper 
-                  elevation={2}
-                  sx={getZeroQuantityStyles(hasZeroQuantity, { 
-                    p: 3,
-                    transition: 'all 0.3s ease-in-out',
-                    '&:hover': { 
-                      elevation: 4,
-                      transform: 'translateY(-2px)',
-                      boxShadow: '0 8px 25px rgba(0,0,0,0.15)'
-                    },
-                    background: 'linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%)',
-                    border: '1px solid',
-                    borderColor: 'divider'
-                  })}
+            filteredAndSortedData.map((group) => {
+              const selectedQuantity = getSelectedQuantity(group);
+              const hasZeroQuantity = hasGroupMissingQuantities(group);
+
+              return (
+                <Tooltip
+                  key={group.groupKey}
+                  title={hasZeroQuantity ? `Enthält Elemente ohne ${selectedQuantity.label || selectedQuantity.type} - Gruppe ${group.displayName}` : ''}
+                  arrow
+                  placement="left"
                 >
-                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
-                  {/* Group Code Badge */}
-                  <Box sx={{ minWidth: 80 }}>
-                    <Chip 
-                      label={group.displayName}
-                      color="primary"
-                      variant="filled"
-                      sx={{ 
-                        fontWeight: 'bold',
-                        fontSize: '0.875rem',
-                        height: 32,
-                        '& .MuiChip-label': { px: 2 }
-                      }}
-                    />
-                    {group.elements.length > 0 && (
-                      <Box sx={{ mt: 0.5 }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                          {group.elements.length} Element{group.elements.length !== 1 ? 'e' : ''}
-                        </Typography>
-                        {hasZeroQuantity && (
-                          <Typography variant="caption" sx={{ 
-                            color: 'warning.main', 
+                  <Paper
+                    elevation={2}
+                    sx={getZeroQuantityStyles(hasZeroQuantity, {
+                      p: 3,
+                      transition: 'all 0.3s ease-in-out',
+                      '&:hover': {
+                        elevation: 4,
+                        transform: 'translateY(-2px)',
+                        boxShadow: '0 8px 25px rgba(0,0,0,0.15)'
+                      },
+                      background: 'linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%)',
+                      border: '1px solid',
+                      borderColor: 'divider'
+                    })}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
+                      {/* Group Code Badge */}
+                      <Box sx={{ minWidth: 80 }}>
+                        <Chip
+                          label={group.displayName}
+                          color="primary"
+                          variant="filled"
+                          sx={{
                             fontWeight: 'bold',
-                            fontSize: '0.65rem',
-                            display: 'block'
-                          }}>
-                            {(() => {
-                              const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
-                              const elementsWithMissingQuantities = group.elements.filter(element => {
-                                return hasElementMissingQuantity(element, selectedQuantityType);
-                              }).length;
-                              return `${elementsWithMissingQuantities} ohne Mengen`;
-                            })()}
-                          </Typography>
+                            fontSize: '0.875rem',
+                            height: 32,
+                            '& .MuiChip-label': { px: 2 }
+                          }}
+                        />
+                        {group.elements.length > 0 && (
+                          <Box sx={{ mt: 0.5 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                              {group.elements.length} Element{group.elements.length !== 1 ? 'e' : ''}
+                            </Typography>
+                            {hasZeroQuantity && (
+                              <Typography variant="caption" sx={{
+                                color: 'warning.main',
+                                fontWeight: 'bold',
+                                fontSize: '0.65rem',
+                                display: 'block'
+                              }}>
+                                {(() => {
+                                  const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
+                                  const elementsWithMissingQuantities = group.elements.filter(element => {
+                                    return hasElementMissingQuantity(element, selectedQuantityType);
+                                  }).length;
+                                  return `${elementsWithMissingQuantities} ohne Mengen`;
+                                })()}
+                              </Typography>
+                            )}
+                          </Box>
                         )}
                       </Box>
-                    )}
-                  </Box>
 
-                  {/* Quantity Selection */}
-                  <Box sx={{ flex: 1, minWidth: 300 }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
-                      Mengenauswahl
-                    </Typography>
-                    {group.availableQuantities && group.availableQuantities.length > 1 ? (
-                      <FormControl fullWidth size="small">
-                        <Select
-                          value={group.selectedQuantityType || group.availableQuantities[0]?.type || ""}
-                          onChange={handleQuantityTypeChange(group.groupKey)}
-                          displayEmpty
-                          sx={{
-                            '& .MuiSelect-select': {
-                              py: 1.5,
-                              fontSize: '0.875rem',
-                              display: 'flex',
-                              alignItems: 'center'
-                            },
-                            '& .MuiOutlinedInput-root': {
-                              transition: 'all 0.2s ease-in-out',
-                              backgroundColor: 'background.paper',
-                              '&:hover': {
-                                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                                backgroundColor: 'grey.50'
-                              },
-                              '&.Mui-focused': {
-                                boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)',
-                                backgroundColor: 'background.paper'
-                              }
-                            }
-                          }}
-                          renderValue={(value) => {
-                            const selected = group.availableQuantities?.find(q => q.type === value);
-                            if (!selected) return '';
-                            return (
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
-                                <Box sx={{ flex: 1 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
-                                    {selected.label}
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {selected.type === 'area' ? 'Flächenberechnung' : 
-                                     selected.type === 'length' ? 'Längenberechnung' : 
-                                     selected.type === 'volume' ? 'Volumenberechnung' : 
-                                     selected.type === 'count' ? 'Stückzahl' : 'Andere'}
-                                  </Typography>
-                                </Box>
-                                <Chip 
-                                  label={`${selected.value.toLocaleString("de-CH")} ${selected.unit}`}
-                                  size="small"
-                                  color={hasZeroQuantity ? "warning" : "primary"}
-                                  variant="filled"
-                                  sx={{ 
-                                    fontWeight: 'bold', 
-                                    fontSize: '0.75rem',
-                                    color: hasZeroQuantity ? 'warning.contrastText' : 'primary.contrastText'
-                                  }}
-                                />
-                              </Box>
-                            );
-                          }}
-                        >
-                          {group.availableQuantities.map((qty) => (
-                            <MenuItem 
-                              key={qty.type} 
-                              value={qty.type}
-                              sx={{ 
-                                py: 2,
-                                '&:hover': { 
-                                  backgroundColor: 'primary.light',
-                                  '& .MuiChip-root': {
-                                    backgroundColor: 'primary.main',
-                                    color: 'white'
+                      {/* Quantity Selection */}
+                      <Box sx={{ flex: 1, minWidth: 300 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
+                          Mengenauswahl
+                        </Typography>
+                        {group.availableQuantities && group.availableQuantities.length > 1 ? (
+                          <FormControl fullWidth size="small">
+                            <Select
+                              value={group.selectedQuantityType || group.availableQuantities[0]?.type || ""}
+                              onChange={handleQuantityTypeChange(group.groupKey)}
+                              displayEmpty
+                              sx={{
+                                '& .MuiSelect-select': {
+                                  py: 1.5,
+                                  fontSize: '0.875rem',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                },
+                                '& .MuiOutlinedInput-root': {
+                                  transition: 'all 0.2s ease-in-out',
+                                  backgroundColor: 'background.paper',
+                                  '&:hover': {
+                                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                                    backgroundColor: 'grey.50'
+                                  },
+                                  '&.Mui-focused': {
+                                    boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)',
+                                    backgroundColor: 'background.paper'
                                   }
                                 }
                               }}
+                              renderValue={(value) => {
+                                const selected = group.availableQuantities?.find(q => q.type === value);
+                                if (!selected) return '';
+                                return (
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
+                                    <Box sx={{ flex: 1 }}>
+                                      <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                                        {selected.label}
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {selected.type === 'area' ? 'Flächenberechnung' :
+                                          selected.type === 'length' ? 'Längenberechnung' :
+                                            selected.type === 'volume' ? 'Volumenberechnung' :
+                                              selected.type === 'count' ? 'Stückzahl' : 'Andere'}
+                                      </Typography>
+                                    </Box>
+                                    <Chip
+                                      label={`${selected.value.toLocaleString("de-CH")} ${selected.unit}`}
+                                      size="small"
+                                      color={hasZeroQuantity ? "warning" : "primary"}
+                                      variant="filled"
+                                      sx={{
+                                        fontWeight: 'bold',
+                                        fontSize: '0.75rem',
+                                        color: hasZeroQuantity ? 'warning.contrastText' : 'primary.contrastText'
+                                      }}
+                                    />
+                                  </Box>
+                                );
+                              }}
                             >
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                                <Box>
-                                  <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
-                                    {qty.label}
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {qty.type === 'area' ? 'Flächenberechnung' : 
-                                     qty.type === 'length' ? 'Längenberechnung' : 
-                                     qty.type === 'volume' ? 'Volumenberechnung' : 
-                                     qty.type === 'count' ? 'Stückzahl' : 'Andere'}
-                                  </Typography>
-                                </Box>
-                                <Chip 
-                                  label={`${qty.value.toLocaleString("de-CH")} ${qty.unit}`}
-                                  size="small"
-                                  variant="outlined"
-                                  color={qty.type === (group.selectedQuantityType || group.availableQuantities?.[0]?.type) ? 'primary' : 'default'}
-                                  sx={{ ml: 1, fontSize: '0.75rem', fontWeight: 'bold' }}
-                                />
-                              </Box>
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    ) : group.availableQuantities && group.availableQuantities.length === 1 ? (
-                      <Box sx={{ 
-                        p: 1.5, 
-                        border: '1px solid', 
-                        borderColor: 'divider', 
-                        borderRadius: 1,
-                        backgroundColor: 'grey.50',
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'space-between' 
-                      }}>
-                        <Box>
-                          <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
-                            {group.availableQuantities[0].label}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Einzige verfügbare Option
-                          </Typography>
-                        </Box>
-                        <Chip 
-                          label={`${group.availableQuantities[0].value.toLocaleString("de-CH")} ${group.availableQuantities[0].unit}`}
+                              {group.availableQuantities.map((qty) => (
+                                <MenuItem
+                                  key={qty.type}
+                                  value={qty.type}
+                                  sx={{
+                                    py: 2,
+                                    '&:hover': {
+                                      backgroundColor: 'primary.light',
+                                      '& .MuiChip-root': {
+                                        backgroundColor: 'primary.main',
+                                        color: 'white'
+                                      }
+                                    }
+                                  }}
+                                >
+                                  <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                                    <Box>
+                                      <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                                        {qty.label}
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {qty.type === 'area' ? 'Flächenberechnung' :
+                                          qty.type === 'length' ? 'Längenberechnung' :
+                                            qty.type === 'volume' ? 'Volumenberechnung' :
+                                              qty.type === 'count' ? 'Stückzahl' : 'Andere'}
+                                      </Typography>
+                                    </Box>
+                                    <Chip
+                                      label={`${qty.value.toLocaleString("de-CH")} ${qty.unit}`}
+                                      size="small"
+                                      variant="outlined"
+                                      color={qty.type === (group.selectedQuantityType || group.availableQuantities?.[0]?.type) ? 'primary' : 'default'}
+                                      sx={{ ml: 1, fontSize: '0.75rem', fontWeight: 'bold' }}
+                                    />
+                                  </Box>
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        ) : group.availableQuantities && group.availableQuantities.length === 1 ? (
+                          <Box sx={{
+                            p: 1.5,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            backgroundColor: 'grey.50',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                          }}>
+                            <Box>
+                              <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                                {group.availableQuantities[0].label}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Einzige verfügbare Option
+                              </Typography>
+                            </Box>
+                            <Chip
+                              label={`${group.availableQuantities[0].value.toLocaleString("de-CH")} ${group.availableQuantities[0].unit}`}
+                              size="small"
+                              color={hasZeroQuantity ? "warning" : "primary"}
+                              variant="filled"
+                              sx={{
+                                fontWeight: 'bold',
+                                color: hasZeroQuantity ? 'warning.contrastText' : 'primary.contrastText'
+                              }}
+                            />
+                          </Box>
+                        ) : (
+                          <Box sx={{
+                            p: 1.5,
+                            border: '1px solid',
+                            borderColor: 'warning.main',
+                            borderRadius: 1,
+                            backgroundColor: 'warning.light',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}>
+                            <Chip label="Keine Mengen verfügbar" size="small" color="warning" />
+                          </Box>
+                        )}
+                      </Box>
+
+                      {/* Cost Input and Calculation */}
+                      <Box sx={{ minWidth: 200 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
+                          Kennwert (CHF)
+                        </Typography>
+                        <TextField
+                          type="number"
+                          variant="outlined"
                           size="small"
-                          color={hasZeroQuantity ? "warning" : "primary"}
-                          variant="filled"
-                          sx={{ 
-                            fontWeight: 'bold',
-                            color: hasZeroQuantity ? 'warning.contrastText' : 'primary.contrastText'
+                          value={kennwerte[group.groupKey] ?? ""}
+                          onChange={handleChange(group.groupKey)}
+                          inputProps={{ step: "0.01", min: 0 }}
+                          fullWidth
+                          placeholder="0.00"
+                          sx={{
+                            '& .MuiOutlinedInput-root': {
+                              transition: 'all 0.2s ease-in-out',
+                              '&:hover': {
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                              },
+                              '&.Mui-focused': {
+                                boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)'
+                              }
+                            }
                           }}
                         />
                       </Box>
-                    ) : (
-                      <Box sx={{ 
-                        p: 1.5, 
-                        border: '1px solid', 
-                        borderColor: 'warning.main', 
-                        borderRadius: 1,
-                        backgroundColor: 'warning.light',
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center' 
-                      }}>
-                        <Chip label="Keine Mengen verfügbar" size="small" color="warning" />
+
+                      {/* Total Cost Display */}
+                      <Box sx={{ minWidth: 150, textAlign: 'right' }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
+                          Gesamtkosten
+                        </Typography>
+                        <Box sx={{
+                          p: 1.5,
+                          borderRadius: 1,
+                          backgroundColor: kennwerte[group.groupKey] ? 'success.light' : 'grey.100',
+                          border: '1px solid',
+                          borderColor: kennwerte[group.groupKey] ? 'success.main' : 'grey.300',
+                          minHeight: 40,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          <Typography
+                            variant="h6"
+                            sx={{
+                              fontWeight: 'bold',
+                              color: kennwerte[group.groupKey] ? 'success.dark' : 'text.secondary',
+                              fontSize: '1rem'
+                            }}
+                          >
+                            {kennwerte[group.groupKey] && selectedQuantity
+                              ? `CHF ${(kennwerte[group.groupKey] * selectedQuantity.value).toLocaleString("de-CH", {
+                                maximumFractionDigits: 2,
+                              })}`
+                              : "CHF -"}
+                          </Typography>
+                        </Box>
                       </Box>
-                    )}
-                  </Box>
-
-                  {/* Cost Input and Calculation */}
-                  <Box sx={{ minWidth: 200 }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
-                      Kennwert (CHF)
-      </Typography>
-                <TextField
-                  type="number"
-                  variant="outlined"
-                  size="small"
-                      value={kennwerte[group.groupKey] ?? ""}
-                      onChange={handleChange(group.groupKey)}
-                  inputProps={{ step: "0.01", min: 0 }}
-                      fullWidth
-                      placeholder="0.00"
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          transition: 'all 0.2s ease-in-out',
-                          '&:hover': {
-                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-                          },
-                          '&.Mui-focused': {
-                            boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)'
-                          }
-                        }
-                      }}
-                    />
-                  </Box>
-
-                  {/* Total Cost Display */}
-                  <Box sx={{ minWidth: 150, textAlign: 'right' }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block', fontWeight: 'medium' }}>
-                      Gesamtkosten
-                    </Typography>
-                    <Box sx={{ 
-                      p: 1.5, 
-                      borderRadius: 1,
-                      backgroundColor: kennwerte[group.groupKey] ? 'success.light' : 'grey.100',
-                      border: '1px solid',
-                      borderColor: kennwerte[group.groupKey] ? 'success.main' : 'grey.300',
-                      minHeight: 40,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      <Typography 
-                        variant="h6" 
-                        sx={{ 
-                          fontWeight: 'bold', 
-                          color: kennwerte[group.groupKey] ? 'success.dark' : 'text.secondary',
-                          fontSize: '1rem'
-                        }}
-                      >
-                        {kennwerte[group.groupKey] && selectedQuantity
-                          ? `CHF ${(kennwerte[group.groupKey] * selectedQuantity.value).toLocaleString("de-CH", {
-                      maximumFractionDigits: 2,
-                            })}`
-                          : "CHF -"}
-                      </Typography>
                     </Box>
-                  </Box>
-                </Box>
-              </Paper>
-            </Tooltip>
-            );
-          })
+                  </Paper>
+                </Tooltip>
+              );
+            })
           )}
         </Box>
       )}
-      
+
     </Box>
   );
 };

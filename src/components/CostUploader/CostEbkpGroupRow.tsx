@@ -122,7 +122,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
         return { value: selected.value, unit: selected.unit };
       }
     }
-    
+
     const defaultQty = group.availableQuantities[0];
     return defaultQty ? { value: defaultQty.value, unit: defaultQty.unit } : { value: 0, unit: '' };
   };
@@ -138,14 +138,14 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
     const quantityValue = getElementQuantityValue(element, selectedQuantityType);
     return isZeroQuantity(quantityValue);
   });
-  
+
   const hasZeroQuantity = elementsWithZeroQuantity.length > 0;
   const elementsWithMissingQuantities = elementsWithZeroQuantity.length;
-  
-   // Memoize filtered and sorted elements for performance
+
+  // Memoize filtered and sorted elements for performance
   const processedElements = useMemo(() => {
     // Filter elements if showing only failing ones
-    let filteredElements = showOnlyFailing 
+    let filteredElements = showOnlyFailing
       ? group.elements.filter(element => isZeroQuantity(getElementQuantityValue(element, selectedQuantityType)))
       : [...group.elements];
 
@@ -153,15 +153,15 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
     const sortedElements = filteredElements.sort((a, b) => {
       const aHasMissingQuantity = isZeroQuantity(getElementQuantityValue(a, selectedQuantityType));
       const bHasMissingQuantity = isZeroQuantity(getElementQuantityValue(b, selectedQuantityType));
-      
+
       // Elements with missing quantities come first
       if (aHasMissingQuantity && !bHasMissingQuantity) return -1;
       if (!aHasMissingQuantity && bHasMissingQuantity) return 1;
-      
+
       // If both have same status, maintain original order
       return 0;
     });
-    
+
     // Show either first 5 or all elements based on showAllElements state
     return (showAllElements || showOnlyFailing) ? sortedElements : sortedElements.slice(0, 5);
   }, [group.elements, selectedQuantityType, showOnlyFailing, showAllElements]);
@@ -185,47 +185,47 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
       </Snackbar>
 
       {/* Main Group Row */}
-      <Tooltip 
+      <Tooltip
         title={hasZeroQuantity ? `Enthält ${elementsWithMissingQuantities} Element${elementsWithMissingQuantities !== 1 ? 'e' : ''} ohne Mengen - Gruppe ${group.code}` : ''}
         arrow
         placement="left"
       >
-      <TableRow 
-          sx={getZeroQuantityStyles(hasZeroQuantity, { 
-          backgroundColor: isSubGroup ? "rgba(0, 0, 0, 0.02)" : "inherit",
-          "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.04)" },
+        <TableRow
+          sx={getZeroQuantityStyles(hasZeroQuantity, {
+            backgroundColor: isSubGroup ? "rgba(0, 0, 0, 0.02)" : "inherit",
+            "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.04)" },
           })}
-      >
+        >
           <TableCell sx={{ py: 1.5, pl: hasZeroQuantity ? (isSubGroup ? 2.5 : 0.5) : (isSubGroup ? 3 : 1) }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            {group.elements.length > 0 && (
-              <IconButton
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              {group.elements.length > 0 && (
+                <IconButton
+                  size="small"
+                  onClick={() => toggleExpand(group.code)}
+                  sx={{ p: 0.5 }}
+                >
+                  {isExpanded ? (
+                    <KeyboardArrowDownIcon fontSize="small" />
+                  ) : (
+                    <KeyboardArrowRightIcon fontSize="small" />
+                  )}
+                </IconButton>
+              )}
+              <Chip
+                label={group.code}
+                color="primary"
+                variant="outlined"
                 size="small"
-                onClick={() => toggleExpand(group.code)}
-                sx={{ p: 0.5 }}
-              >
-                {isExpanded ? (
-                  <KeyboardArrowDownIcon fontSize="small" />
-                ) : (
-                  <KeyboardArrowRightIcon fontSize="small" />
-                )}
-              </IconButton>
-            )}
-            <Chip 
-              label={group.code}
-              color="primary"
-              variant="outlined"
-              size="small"
-              sx={{ fontWeight: 'bold' }}
-            />
-            {group.elements.length > 0 && (
+                sx={{ fontWeight: 'bold' }}
+              />
+              {group.elements.length > 0 && (
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-              <Typography variant="caption" color="text.secondary">
-                {group.elements.length} Element{group.elements.length !== 1 ? 'e' : ''}
-              </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {group.elements.length} Element{group.elements.length !== 1 ? 'e' : ''}
+                  </Typography>
                   {elementsWithMissingQuantities > 0 && (
-                    <Typography variant="caption" sx={{ 
-                      color: 'warning.main', 
+                    <Typography variant="caption" sx={{
+                      color: 'warning.main',
                       fontWeight: 'bold',
                       fontSize: '0.65rem'
                     }}>
@@ -243,7 +243,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                             setShowAllElements(true); // Show all when filtering to failing
                           }
                         }}
-                        sx={{ 
+                        sx={{
                           fontSize: '0.6rem',
                           py: 0.25,
                           px: 0.75,
@@ -255,72 +255,72 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                     </Box>
                   )}
                 </Box>
-            )}
-          </Box>
-        </TableCell>
-        
-        <TableCell sx={{ py: 1.5, textAlign: "right" }}>
-          <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 0.5 }}>
-              <Typography variant="body2" sx={{ 
+              )}
+            </Box>
+          </TableCell>
+
+          <TableCell sx={{ py: 1.5, textAlign: "right" }}>
+            <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 0.5 }}>
+              <Typography variant="body2" sx={{
                 fontWeight: hasZeroQuantity ? 'bold' : 'medium',
                 color: hasZeroQuantity ? 'warning.main' : 'inherit'
               }}>
-              {formatQuantity(selectedQuantity.value)} {selectedQuantity.unit}
+                {formatQuantity(selectedQuantity.value)} {selectedQuantity.unit}
+              </Typography>
+
+              {group.availableQuantities.length > 1 && (
+                <FormControl size="small" sx={{ minWidth: 80 }}>
+                  <Select
+                    value={group.selectedQuantityType || group.availableQuantities[0]?.type || ''}
+                    onChange={handleQuantityTypeChange}
+                    variant="outlined"
+                    sx={{ fontSize: '0.75rem' }}
+                  >
+                    {group.availableQuantities.map((qty) => (
+                      <MenuItem key={qty.type} value={qty.type}>
+                        {qty.type === 'area' ? 'Fläche' :
+                          qty.type === 'length' ? 'Länge' :
+                            qty.type === 'volume' ? 'Volumen' :
+                              qty.type === 'count' ? 'Stück' : qty.type}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
+            </Box>
+          </TableCell>
+
+          <TableCell sx={{ py: 1.5, textAlign: "right" }}>
+            <TextField
+              type="number"
+              value={kennwert}
+              onChange={handleKennwertChange}
+              variant="outlined"
+              size="small"
+              sx={{ width: 120 }}
+              InputProps={{
+                endAdornment: <Typography variant="caption" color="text.secondary">CHF</Typography>,
+              }}
+            />
+          </TableCell>
+
+          <TableCell sx={{ py: 1.5, textAlign: "right" }}>
+            <Typography variant="subtitle2" fontWeight="bold">
+              {formatCurrency(totalCost)}
             </Typography>
-            
-            {group.availableQuantities.length > 1 && (
-              <FormControl size="small" sx={{ minWidth: 80 }}>
-                <Select
-                  value={group.selectedQuantityType || group.availableQuantities[0]?.type || ''}
-                  onChange={handleQuantityTypeChange}
-                  variant="outlined"
-                  sx={{ fontSize: '0.75rem' }}
-                >
-                  {group.availableQuantities.map((qty) => (
-                    <MenuItem key={qty.type} value={qty.type}>
-                      {qty.type === 'area' ? 'Fläche' : 
-                       qty.type === 'length' ? 'Länge' : 
-                       qty.type === 'volume' ? 'Volumen' : 
-                       qty.type === 'count' ? 'Stück' : qty.type}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            )}
-          </Box>
-        </TableCell>
-        
-        <TableCell sx={{ py: 1.5, textAlign: "right" }}>
-          <TextField
-            type="number"
-            value={kennwert}
-            onChange={handleKennwertChange}
-            variant="outlined"
-            size="small"
-            sx={{ width: 120 }}
-            InputProps={{
-              endAdornment: <Typography variant="caption" color="text.secondary">CHF</Typography>,
-            }}
-          />
-        </TableCell>
-        
-        <TableCell sx={{ py: 1.5, textAlign: "right" }}>
-          <Typography variant="subtitle2" fontWeight="bold">
-            {formatCurrency(totalCost)}
-          </Typography>
-        </TableCell>
-      </TableRow>
+          </TableCell>
+        </TableRow>
       </Tooltip>
 
       {/* Collapsible Elements */}
       {group.elements.length > 0 && (
         <TableRow>
-          <TableCell 
-            colSpan={4} 
-            sx={{ 
-              py: 0, 
+          <TableCell
+            colSpan={4}
+            sx={{
+              py: 0,
               border: "none",
-              backgroundColor: "rgba(0, 0, 0, 0.01)" 
+              backgroundColor: "rgba(0, 0, 0, 0.01)"
             }}
           >
             <Collapse in={isExpanded} timeout="auto" unmountOnExit>
@@ -331,9 +331,9 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                       // For individual elements, check if they have zero quantity for the selected type
                       const quantityValue = getElementQuantityValue(element, selectedQuantityType);
                       const elementHasZeroQuantity = isZeroQuantity(quantityValue);
-                      
+
                       return (
-                        <Tooltip 
+                        <Tooltip
                           key={element._id}
                           title={
                             <Box sx={{ p: 0.5 }}>
@@ -352,9 +352,9 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                               )}
                               {elementHasZeroQuantity && (
                                 <Typography variant="caption" sx={{ display: 'block', color: 'warning.light', fontWeight: 'bold' }}>
-                                  ⚠ Keine {selectedQuantityType === 'area' ? 'Fläche' : 
-                                           selectedQuantityType === 'length' ? 'Länge' : 
-                                           selectedQuantityType === 'volume' ? 'Volumen' : 'Menge'} vorhanden
+                                  ⚠ Keine {selectedQuantityType === 'area' ? 'Fläche' :
+                                    selectedQuantityType === 'length' ? 'Länge' :
+                                      selectedQuantityType === 'volume' ? 'Volumen' : 'Menge'} vorhanden
                                 </Typography>
                               )}
                               <Typography variant="caption" sx={{ display: 'block', fontSize: '0.65rem', mt: 0.5 }}>
@@ -375,30 +375,30 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                                 {/* Main element info */}
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                  <Typography variant="caption" sx={{ 
+                                  <Typography variant="caption" sx={{
                                     color: elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                     fontWeight: elementHasZeroQuantity ? 'bold' : 'medium',
                                     fontSize: '0.8rem'
                                   }}>
                                     {element.type_name || element.ifc_class || 'Unknown'}
                                   </Typography>
-                                  
+
                                   {/* Status badges */}
                                   <Box sx={{ display: 'flex', gap: 0.5 }}>
                                     {element.is_structural && (
-                                      <Chip 
-                                        label="Tragwerk" 
-                                        size="small" 
-                                        color="primary" 
+                                      <Chip
+                                        label="Tragwerk"
+                                        size="small"
+                                        color="primary"
                                         variant="outlined"
                                         sx={{ fontSize: '0.6rem', height: 16 }}
                                       />
                                     )}
                                     {element.is_external && (
-                                      <Chip 
-                                        label="Extern" 
-                                        size="small" 
-                                        color="secondary" 
+                                      <Chip
+                                        label="Extern"
+                                        size="small"
+                                        color="secondary"
                                         variant="outlined"
                                         sx={{ fontSize: '0.6rem', height: 16 }}
                                       />
@@ -418,8 +418,8 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                             setShowToast(true);
                                           }
                                         }}
-                                        sx={{ 
-                                          p: 0.25, 
+                                        sx={{
+                                          p: 0.25,
                                           fontSize: '0.7rem',
                                           color: 'text.secondary',
                                           '&:hover': {
@@ -436,7 +436,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
 
                                 {/* Element name if different from type */}
                                 {element.name && element.name !== element.type_name && (
-                                  <Typography variant="caption" sx={{ 
+                                  <Typography variant="caption" sx={{
                                     color: 'text.secondary',
                                     fontSize: '0.7rem',
                                     fontStyle: 'italic'
@@ -448,7 +448,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                 {/* Quantities info */}
                                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                                   {element.area !== undefined && (
-                                    <Typography variant="caption" sx={{ 
+                                    <Typography variant="caption" sx={{
                                       color: selectedQuantityType === 'area' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
                                       fontWeight: selectedQuantityType === 'area' ? 'bold' : 'normal'
@@ -457,7 +457,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                     </Typography>
                                   )}
                                   {element.length !== undefined && (
-                                    <Typography variant="caption" sx={{ 
+                                    <Typography variant="caption" sx={{
                                       color: selectedQuantityType === 'length' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
                                       fontWeight: selectedQuantityType === 'length' ? 'bold' : 'normal'
@@ -466,7 +466,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                     </Typography>
                                   )}
                                   {element.volume !== undefined && (
-                                    <Typography variant="caption" sx={{ 
+                                    <Typography variant="caption" sx={{
                                       color: selectedQuantityType === 'volume' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
                                       fontWeight: selectedQuantityType === 'volume' ? 'bold' : 'normal'
@@ -480,13 +480,13 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                 {element.materials && element.materials.length > 0 && (
                                   <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                                     {element.materials.slice(0, 2).map((material, idx) => (
-                                      <Chip 
+                                      <Chip
                                         key={idx}
-                                        label={material.name} 
-                                        size="small" 
+                                        label={material.name}
+                                        size="small"
                                         variant="outlined"
-                                        sx={{ 
-                                          fontSize: '0.6rem', 
+                                        sx={{
+                                          fontSize: '0.6rem',
                                           height: 16,
                                           color: 'text.secondary',
                                           borderColor: 'rgba(0,0,0,0.12)'
@@ -494,7 +494,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                       />
                                     ))}
                                     {element.materials.length > 2 && (
-                                      <Typography variant="caption" sx={{ 
+                                      <Typography variant="caption" sx={{
                                         color: 'text.secondary',
                                         fontSize: '0.6rem',
                                         alignSelf: 'center'
@@ -512,7 +512,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                   {element.level || 'Unbekannte Ebene'}
                                 </Typography>
                                 {element.classification && (
-                                  <Typography variant="caption" sx={{ 
+                                  <Typography variant="caption" sx={{
                                     color: 'text.secondary',
                                     fontSize: '0.65rem',
                                     textAlign: 'right'
@@ -533,9 +533,9 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                         <TableCell sx={{ py: 0.5, border: "none" }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                          <Typography variant="caption" color="text.secondary">
+                              <Typography variant="caption" color="text.secondary">
                                 ... und {group.elements.length - 5} weitere
-                          </Typography>
+                              </Typography>
                               {(() => {
                                 // Count remaining elements with missing quantities
                                 const remainingElements = group.elements.slice(5);
@@ -543,15 +543,15 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                   const quantityValue = getElementQuantityValue(element, selectedQuantityType);
                                   return isZeroQuantity(quantityValue);
                                 }).length;
-                                
+
                                 return remainingWithMissingQuantities > 0 ? (
-                                  <Typography variant="caption" sx={{ 
-                                    color: 'warning.main', 
+                                  <Typography variant="caption" sx={{
+                                    color: 'warning.main',
                                     fontWeight: 'bold',
                                     fontSize: '0.6rem'
                                   }}>
                                     {remainingWithMissingQuantities} weitere ohne Mengen
-                          </Typography>
+                                  </Typography>
                                 ) : null;
                               })()}
                             </Box>
@@ -560,7 +560,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                               variant="outlined"
                               onClick={() => setShowAllElements(true)}
                               startIcon={<ExpandMoreIcon />}
-                              sx={{ 
+                              sx={{
                                 fontSize: '0.65rem',
                                 py: 0.25,
                                 px: 1,
@@ -584,7 +584,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                             variant="outlined"
                             onClick={() => setShowAllElements(false)}
                             startIcon={<ExpandLessIcon />}
-                            sx={{ 
+                            sx={{
                               fontSize: '0.65rem',
                               py: 0.25,
                               px: 1,

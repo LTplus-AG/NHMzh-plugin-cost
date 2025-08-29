@@ -34,13 +34,13 @@ import logger from '../utils/logger';
 
 const getAvailableQuantities = (el: MongoElement) => {
   const quantities = [];
-  
+
   if (el.available_quantities && el.available_quantities.length > 0) {
     return el.available_quantities;
   }
-  
+
   const elAny = el as MongoElement & { area?: number; length?: number; volume?: number };
-  
+
   if (elAny.area && elAny.area > 0) {
     quantities.push({
       value: elAny.area,
@@ -49,7 +49,7 @@ const getAvailableQuantities = (el: MongoElement) => {
       label: "Area"
     });
   }
-  
+
   if (elAny.length && elAny.length > 0) {
     quantities.push({
       value: elAny.length,
@@ -58,7 +58,7 @@ const getAvailableQuantities = (el: MongoElement) => {
       label: "Length"
     });
   }
-  
+
   if (elAny.volume && elAny.volume > 0) {
     quantities.push({
       value: elAny.volume,
@@ -67,7 +67,7 @@ const getAvailableQuantities = (el: MongoElement) => {
       label: "Volume"
     });
   }
-  
+
   if (quantities.length === 0 || !quantities.some(q => q.type === 'count')) {
     quantities.push({
       value: 1,
@@ -76,7 +76,7 @@ const getAvailableQuantities = (el: MongoElement) => {
       label: "Count"
     });
   }
-  
+
   return quantities;
 };
 
@@ -85,11 +85,11 @@ const getSelectedQuantity = (
   selectedType?: string
 ): { value: number; unit: string; type: string } => {
   const availableQuantities = getAvailableQuantities(el);
-  
+
   if (availableQuantities.length === 0) {
     return { value: 1, unit: "Stk", type: "count" };
   }
-  
+
   if (selectedType) {
     const selected = availableQuantities.find(q => q.type === selectedType);
     if (selected) {
@@ -100,7 +100,7 @@ const getSelectedQuantity = (
       };
     }
   }
-  
+
   const defaultQty = availableQuantities[0];
   return {
     value: defaultQty.value,
@@ -112,36 +112,36 @@ const getSelectedQuantity = (
 const formatCurrency = (value: number): string => {
   // For values under 10,000, show with 2 decimal places
   if (value < 10000) {
-    return value.toLocaleString('de-CH', { 
-      minimumFractionDigits: 2, 
-      maximumFractionDigits: 2 
+    return value.toLocaleString('de-CH', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
     });
   }
-  
+
   // For values 10k-999k, show without decimals
   if (value < 1000000) {
-    return value.toLocaleString('de-CH', { 
-      minimumFractionDigits: 0, 
-      maximumFractionDigits: 0 
+    return value.toLocaleString('de-CH', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
     });
   }
-  
+
   // For millions (1M - 999M)
   if (value < 1000000000) {
     const millions = value / 1000000;
     // Always show 3 decimal places for millions
-    return millions.toLocaleString('de-CH', { 
-      minimumFractionDigits: 3, 
-      maximumFractionDigits: 3 
+    return millions.toLocaleString('de-CH', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3
     }) + ' Mio.';
   }
-  
+
   // For billions
   const billions = value / 1000000000;
   // Always show 3 decimal places for billions
-  return billions.toLocaleString('de-CH', { 
-    minimumFractionDigits: 3, 
-    maximumFractionDigits: 3 
+  return billions.toLocaleString('de-CH', {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3
   }) + ' Mrd.';
 };
 
@@ -149,6 +149,8 @@ interface Project {
   id: string;
   name: string;
 }
+
+type QuantityType = "area" | "length" | "volume" | "count";
 
 const MainPage = () => {
   const Instructions = [
@@ -177,13 +179,13 @@ const MainPage = () => {
 
   const [ebkpStats, setEbkpStats] = useState<EbkpStat[]>([]);
   const [kennwerte, setKennwerte] = useState<Record<string, number>>({});
-  const [quantitySelections, setQuantitySelections] = useState<Record<string, string>>({});
+  const [quantitySelections, setQuantitySelections] = useState<Record<string, QuantityType>>({});
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [isLoadingKennwerte, setIsLoadingKennwerte] = useState(false);
-  
+
   // Add a ref to track if we're loading kennwerte
   const isLoadingKennwerteRef = useRef(false);
-  
+
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [metaFileForPreview, setMetaFileForPreview] = useState<MetaFile | null>(null);
 
@@ -250,16 +252,20 @@ const MainPage = () => {
       try {
         const savedSelections = localStorage.getItem(`cost-plugin-quantity-selections-${selectedProject}`);
         if (savedSelections) {
-          const parsedSelections = JSON.parse(savedSelections);
-          setQuantitySelections({ ...parsedSelections }); // Create new object reference
-          logger.info(`Loaded ${Object.keys(parsedSelections).length} quantity selections from localStorage for project ${selectedProject}`);
+          const parsed = JSON.parse(savedSelections);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            setQuantitySelections({ ...(parsed as Record<string, QuantityType>) });
+            logger.info(`Loaded ${Object.keys(parsed).length} quantity selections from localStorage for project ${selectedProject}`);
+          } else {
+            setQuantitySelections({});
+          }
         } else {
           // No saved selections, initialize empty
-          setQuantitySelections({ ...{} }); // Create new object reference
+          setQuantitySelections({});
         }
       } catch (error) {
         logger.warn('Failed to load saved quantity selections:', error);
-        setQuantitySelections({ ...{} }); // Create new object reference
+        setQuantitySelections({});
       }
     } else {
       // No project selected, clear quantity selections
@@ -297,7 +303,7 @@ const MainPage = () => {
   useEffect(() => {
     // Don't save on initial mount, when no project is selected, or while loading
     if (!selectedProject || isLoadingKennwerte || isLoadingKennwerteRef.current) return;
-    
+
     // Save after a debounce delay, regardless of whether kennwerte is empty
     // This ensures that clearing kennwerte also gets persisted
     const timeoutId = setTimeout(() => {
@@ -310,7 +316,7 @@ const MainPage = () => {
   // Save quantity selections to localStorage whenever they change (project-specific)
   useEffect(() => {
     if (!selectedProject) return;
-    
+
     try {
       const key = `cost-plugin-quantity-selections-${selectedProject}`;
       localStorage.setItem(key, JSON.stringify(quantitySelections));
@@ -324,7 +330,7 @@ const MainPage = () => {
   const fetchElementsForProject = useCallback(
     async (projectName: string | null) => {
       logger.info(`fetchElementsForProject called with projectName: ${projectName}`);
-      
+
       if (!projectName) {
         setCurrentElements([]);
         setLoadingElements(false);
@@ -386,8 +392,8 @@ const MainPage = () => {
               el.classification?.id || el.properties?.ebkph || "Unknown";
 
             if (!statMap[code]) {
-              statMap[code] = { 
-                quantity: 0, 
+              statMap[code] = {
+                quantity: 0,
                 unit: undefined,
                 availableQuantities: [],
                 selectedQuantityType: quantitySelections[code],
@@ -411,10 +417,10 @@ const MainPage = () => {
             stat.elements.forEach(el => {
               const availableQuantities = getAvailableQuantities(el);
               const selectedQty = getSelectedQuantity(el, selectedType);
-              
+
               totalQuantity += selectedQty.value;
               unit = selectedQty.unit; // Use unit from selected quantity type
-              
+
               // Collect all unique quantity types available across elements
               availableQuantities.forEach(qty => {
                 const key = qty.type;
@@ -512,12 +518,12 @@ const MainPage = () => {
 
   const clearSavedData = () => {
     if (!selectedProject) return;
-    
+
     try {
       // Clear quantity selections from localStorage (still using localStorage for these)
       const selectionsKey = `cost-plugin-quantity-selections-${selectedProject}`;
       localStorage.removeItem(selectionsKey);
-      
+
       // Clear kennwerte from state (will trigger save to backend with empty object)
       setKennwerte({});
       setQuantitySelections({});
@@ -526,7 +532,7 @@ const MainPage = () => {
       if (currentElements.length > 0) {
         recalculateStats({});
       }
-      
+
       logger.info(`Cleared all saved data for project ${selectedProject}`);
     } catch (error) {
       logger.warn('Failed to clear saved data:', error);
@@ -535,7 +541,7 @@ const MainPage = () => {
 
   const handlePreviewCosts = () => {
     if (!selectedProject || ebkpStats.length === 0) return;
-    
+
     const costItems = ebkpStats
       .filter(stat => stat.quantity > 0 && kennwerte[stat.code] > 0)
       .map(stat => ({
@@ -568,8 +574,8 @@ const MainPage = () => {
   const handleConfirmCosts = async () => {
     if (!selectedProject || !modelMetadata) {
       logger.error("Project or model metadata not available.");
-        return;
-      }
+      return;
+    }
 
     // Debug logging
     logger.info("ModelMetadata:", modelMetadata);
@@ -631,91 +637,91 @@ const MainPage = () => {
   };
 
   const recalculateStats = useCallback(
-    (newQuantitySelections: Record<string, string>) => {
-    if (currentElements.length === 0) return;
-    
-    const statMap: Record<string, { 
-      quantity: number; 
-      unit?: string;
-      availableQuantities?: Array<{ value: number; type: string; unit: string; label: string }>;
-      selectedQuantityType?: string;
-      elements: MongoElement[];
-    }> = {};
+    (newQuantitySelections: Record<string, QuantityType>) => {
+      if (currentElements.length === 0) return;
 
-    // Group elements by EBKP code
-    currentElements.forEach((el: MongoElement) => {
-      const code = el.classification?.id || el.properties?.ebkph || "Unknown";
-      
-      if (!statMap[code]) {
-        statMap[code] = { 
-          quantity: 0, 
-          unit: undefined,
-          availableQuantities: [],
-          selectedQuantityType: newQuantitySelections[code],
-          elements: []
-        };
-      }
-      statMap[code].elements.push(el);
-    });
+      const statMap: Record<string, {
+        quantity: number;
+        unit?: string;
+        availableQuantities?: Array<{ value: number; type: string; unit: string; label: string }>;
+        selectedQuantityType?: string;
+        elements: MongoElement[];
+      }> = {};
 
-    // Calculate aggregated quantities for each EBKP code
-    Object.keys(statMap).forEach(code => {
-      const stat = statMap[code];
-      const selectedType = newQuantitySelections[code];
-      let totalQuantity = 0;
-      let unit = "";
-      const allAvailableQuantities = new Map();
+      // Group elements by EBKP code
+      currentElements.forEach((el: MongoElement) => {
+        const code = el.classification?.id || el.properties?.ebkph || "Unknown";
 
-      // Aggregate quantities from all elements in this EBKP group
-      stat.elements.forEach(el => {
-        const availableQuantities = getAvailableQuantities(el);
-        const selectedQty = getSelectedQuantity(el, selectedType);
-        
-        totalQuantity += selectedQty.value;
-        unit = selectedQty.unit;
-        
-        // Collect all unique quantity types available across elements
-        availableQuantities.forEach(qty => {
-          const key = qty.type;
-          if (!allAvailableQuantities.has(key)) {
-            allAvailableQuantities.set(key, {
-              value: 0,
-              type: qty.type,
-              unit: qty.unit,
-              label: qty.label
-            });
-          }
-          const currentQty = getSelectedQuantity(el, qty.type);
-          allAvailableQuantities.get(key).value += currentQty.value;
-        });
+        if (!statMap[code]) {
+          statMap[code] = {
+            quantity: 0,
+            unit: undefined,
+            availableQuantities: [],
+            selectedQuantityType: newQuantitySelections[code],
+            elements: []
+          };
+        }
+        statMap[code].elements.push(el);
       });
 
-      stat.quantity = totalQuantity;
-      stat.unit = unit;
-      stat.availableQuantities = Array.from(allAvailableQuantities.values());
-      stat.selectedQuantityType = selectedType || (stat.availableQuantities[0]?.type);
-    });
+      // Calculate aggregated quantities for each EBKP code
+      Object.keys(statMap).forEach(code => {
+        const stat = statMap[code];
+        const selectedType = newQuantitySelections[code];
+        let totalQuantity = 0;
+        let unit = "";
+        const allAvailableQuantities = new Map();
 
-    const stats = Object.entries(statMap).map(([code, v]) => ({
-      code,
-      quantity: v.quantity,
-      unit: v.unit,
-      availableQuantities: v.availableQuantities,
-      selectedQuantityType: v.selectedQuantityType,
-      elements: v.elements,
-    }));
-    
+        // Aggregate quantities from all elements in this EBKP group
+        stat.elements.forEach(el => {
+          const availableQuantities = getAvailableQuantities(el);
+          const selectedQty = getSelectedQuantity(el, selectedType);
 
-    setEbkpStats(stats);
-  }, [currentElements]);
+          totalQuantity += selectedQty.value;
+          unit = selectedQty.unit;
 
-  const handleQuantityTypeChange = useCallback((code: string, quantityType: string) => {
-    
+          // Collect all unique quantity types available across elements
+          availableQuantities.forEach(qty => {
+            const key = qty.type;
+            if (!allAvailableQuantities.has(key)) {
+              allAvailableQuantities.set(key, {
+                value: 0,
+                type: qty.type,
+                unit: qty.unit,
+                label: qty.label
+              });
+            }
+            const currentQty = getSelectedQuantity(el, qty.type);
+            allAvailableQuantities.get(key).value += currentQty.value;
+          });
+        });
+
+        stat.quantity = totalQuantity;
+        stat.unit = unit;
+        stat.availableQuantities = Array.from(allAvailableQuantities.values());
+        stat.selectedQuantityType = selectedType || (stat.availableQuantities[0]?.type);
+      });
+
+      const stats = Object.entries(statMap).map(([code, v]) => ({
+        code,
+        quantity: v.quantity,
+        unit: v.unit,
+        availableQuantities: v.availableQuantities,
+        selectedQuantityType: v.selectedQuantityType,
+        elements: v.elements,
+      }));
+
+
+      setEbkpStats(stats);
+    }, [currentElements]);
+
+  const handleQuantityTypeChange = useCallback((code: string, quantityType: QuantityType) => {
+
     const newSelections = {
       ...quantitySelections,
       [code]: quantityType
     };
-    
+
     setQuantitySelections(newSelections);
     recalculateStats(newSelections);
   }, [quantitySelections, recalculateStats]);
@@ -763,253 +769,253 @@ const MainPage = () => {
         width: "100%",
       }}
     >
-        {/* Sidebar */}
-        <div className="w-1/4 min-w-[300px] max-w-[400px] px-8 pt-4 pb-0 bg-light text-primary flex flex-col h-full overflow-y-auto">
+      {/* Sidebar */}
+      <div className="w-1/4 min-w-[300px] max-w-[400px] px-8 pt-4 pb-0 bg-light text-primary flex flex-col h-full overflow-y-auto">
         <div className="flex flex-col h-full text-left">
-            <Typography variant="h3" className="text-5xl mb-2" color="primary">
-              Kosten
-            </Typography>
-            <div className="flex mt-2 gap-1 flex-col">
-              <FormLabel focused htmlFor="select-project">Projekt:</FormLabel>
-              <FormControl variant="outlined" focused>
-                <Select
-                  id="select-project"
-                  size="small"
-                  value={selectedProject || ""}
-                  onChange={handleProjectChange}
-                  labelId="select-project"
-                  disabled={loadingProjects}
-                >
-                  {loadingProjects && (
-                    <MenuItem key="loading" value="" disabled>
-                      <CircularProgress size={20} sx={{ mr: 1 }} />
-                      Lade Projekte...
-                    </MenuItem>
-                  )}
-                  {!loadingProjects && projectsList.length === 0 && (
-                    <MenuItem key="no-projects" value="" disabled>
-                      Keine Projekte gefunden
-                    </MenuItem>
-                  )}
-                  {!loadingProjects &&
-                    projectsList.map((project) => (
-                      <MenuItem key={project.id} value={project.name}>
-                        {project.name}
-                      </MenuItem>
-                    ))}
-                </Select>
-              </FormControl>
-            </div>
-
-            {/* Total Cost Display - Similar to LCA plugin */}
-            {selectedProject && (
-              <Box
-                sx={{
-                  mb: 3,
-                  mt: 3,
-                  p: 2,
-                  background: "linear-gradient(to right top, #F1D900, #fff176)",
-                  borderRadius: "4px",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "center",
-                  minHeight: "80px",
-                }}
+          <Typography variant="h3" className="text-5xl mb-2" color="primary">
+            Kosten
+          </Typography>
+          <div className="flex mt-2 gap-1 flex-col">
+            <FormLabel focused htmlFor="select-project">Projekt:</FormLabel>
+            <FormControl variant="outlined" focused>
+              <Select
+                id="select-project"
+                size="small"
+                value={selectedProject || ""}
+                onChange={handleProjectChange}
+                labelId="select-project"
+                disabled={loadingProjects}
               >
-                <Typography
-                  variant="subtitle2"
-                  sx={{ mb: 0.5, fontWeight: 600, fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.7)" }}
-                >
-                  Gesamtkosten
-                </Typography>
-                <Typography
-                  variant="h4"
-                  component="p"
-                  color="common.black"
-                  fontWeight="bold"
-                >
-                  CHF {formatCurrency(totalCost)}
-                </Typography>
-              </Box>
-            )}
-
-            {/* Data persistence section */}
-            <Box sx={{ mt: 2, mb: 2 }}>
-              <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
-                Gespeicherte Daten
-              </Typography>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    💾 Kennwerte: {Object.keys(kennwerte).length} gespeichert
-                  </Typography>
-                </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    📊 Mengenauswahl: {Object.keys(quantitySelections).length} gespeichert
-                  </Typography>
-                </Box>
-                {lastSaved && (
-                  <Typography variant="caption" color="success.main" sx={{ fontSize: '0.7rem' }}>
-                    ✅ Zuletzt gespeichert: {lastSaved}
-                  </Typography>
+                {loadingProjects && (
+                  <MenuItem key="loading" value="" disabled>
+                    <CircularProgress size={20} sx={{ mr: 1 }} />
+                    Lade Projekte...
+                  </MenuItem>
                 )}
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="warning"
-                  onClick={clearSavedData}
-                  sx={{ mt: 1, fontSize: "0.75rem" }}
-                  disabled={Object.keys(kennwerte).length === 0 && Object.keys(quantitySelections).length === 0}
-                >
-                  🗑️ Alle Daten löschen
-                </Button>
-              </Box>
-            </Box>
+                {!loadingProjects && projectsList.length === 0 && (
+                  <MenuItem key="no-projects" value="" disabled>
+                    Keine Projekte gefunden
+                  </MenuItem>
+                )}
+                {!loadingProjects &&
+                  projectsList.map((project) => (
+                    <MenuItem key={project.id} value={project.name}>
+                      {project.name}
+                    </MenuItem>
+                  ))}
+              </Select>
+            </FormControl>
+          </div>
 
-            <div className="flex flex-col mt-auto">
-              <div>
+          {/* Total Cost Display - Similar to LCA plugin */}
+          {selectedProject && (
+            <Box
+              sx={{
+                mb: 3,
+                mt: 3,
+                p: 2,
+                background: "linear-gradient(to right top, #F1D900, #fff176)",
+                borderRadius: "4px",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                minHeight: "80px",
+              }}
+            >
+              <Typography
+                variant="subtitle2"
+                sx={{ mb: 0.5, fontWeight: 600, fontSize: "0.875rem", color: "rgba(0, 0, 0, 0.7)" }}
+              >
+                Gesamtkosten
+              </Typography>
+              <Typography
+                variant="h4"
+                component="p"
+                color="common.black"
+                fontWeight="bold"
+              >
+                CHF {formatCurrency(totalCost)}
+              </Typography>
+            </Box>
+          )}
+
+          {/* Data persistence section */}
+          <Box sx={{ mt: 2, mb: 2 }}>
+            <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+              Gespeicherte Daten
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  💾 Kennwerte: {Object.keys(kennwerte).length} gespeichert
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  📊 Mengenauswahl: {Object.keys(quantitySelections).length} gespeichert
+                </Typography>
+              </Box>
+              {lastSaved && (
+                <Typography variant="caption" color="success.main" sx={{ fontSize: '0.7rem' }}>
+                  ✅ Zuletzt gespeichert: {lastSaved}
+                </Typography>
+              )}
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                onClick={clearSavedData}
+                sx={{ mt: 1, fontSize: "0.75rem" }}
+                disabled={Object.keys(kennwerte).length === 0 && Object.keys(quantitySelections).length === 0}
+              >
+                🗑️ Alle Daten löschen
+              </Button>
+            </Box>
+          </Box>
+
+          <div className="flex flex-col mt-auto">
+            <div>
               <Typography
                 variant="subtitle1"
                 className="font-bold mb-2"
                 color="primary"
               >
-                  Anleitung
-                </Typography>
-                <Divider sx={{ mb: 2 }} />
-                <Stepper orientation="vertical" nonLinear className="max-w-xs">
-                  {Instructions.map((step) => (
-                    <Step key={step.label} active>
-                      <StepLabel>
+                Anleitung
+              </Typography>
+              <Divider sx={{ mb: 2 }} />
+              <Stepper orientation="vertical" nonLinear className="max-w-xs">
+                {Instructions.map((step) => (
+                  <Step key={step.label} active>
+                    <StepLabel>
                       <span
                         className="leading-tight text-primary font-bold"
                         style={{ color: "#0D0599" }}
                       >
-                          {step.label}
-                        </span>
-                      </StepLabel>
-                      <div className="ml-8 -mt-2">
+                        {step.label}
+                      </span>
+                    </StepLabel>
+                    <div className="ml-8 -mt-2">
                       <span
                         className="text-sm leading-none"
                         style={{ color: "#0D0599" }}
                       >
-                          {step.description}
-                        </span>
-                      </div>
-                    </Step>
-                  ))}
-                </Stepper>
-              </div>
+                        {step.description}
+                      </span>
+                    </div>
+                  </Step>
+                ))}
+              </Stepper>
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Main area */}
+      {/* Main area */}
       <div className="flex-1 flex flex-col overflow-y-auto">
-          <div className="flex-grow px-10 pt-4 pb-10 flex flex-col">
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                mb: 2,
-                minHeight: "40px",
-              }}
-            >
-              {selectedProject && (
-                <ProjectMetadataDisplay
-                  metadata={modelMetadata}
-                  loading={loadingElements && !modelMetadata}
-                />
-              )}
-              
-              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                {selectedProject && ebkpStats.length > 0 && (
-                  <SmartExcelButton
-                    onExport={handleExcelExport}
-                    onImport={handleSmartExcelImport}
-                    isExporting={isExporting}
-                    isImporting={isImporting}
-                    lastExportTime={activity.lastExportTime}
-                    lastImportTime={activity.lastImportTime}
-                    exportCount={activity.exportCount}
-                    importCount={activity.importCount}
-                  />
-                )}
-                
-                {selectedProject && totalCost > 0 && (
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    startIcon={<SendIcon />}
-                    onClick={handlePreviewCosts}
-                    sx={{
-                      fontWeight: 500,
-                      textTransform: "none",
-                      backgroundColor: "#0D0599",
-                      "&:hover": {
-                        backgroundColor: "#0A0477",
-                      },
-                    }}
-                  >
-                    Kosten übermitteln
-                  </Button>
-                )}
-              </Box>
-            </Box>
-
-            {projectsList.length === 0 && !loadingProjects ? (
-              <EmptyState
-                icon="folder"
-                title="Keine Projekte mit Kostendaten verfügbar"
-                description="Für die Kostenberechnung sind IFC-Dateien und bestätigte Mengen aus dem Mengen-Modul erforderlich. Laden Sie zunächst eine IFC-Datei über den IFC Uploader hoch und bestätigen Sie die Mengen, oder wenden Sie sich an die zuständige Person."
-                actions={[
-                  {
-                    label: "IFC Uploader öffnen",
-                    onClick: () => navigateToIfcUploader(getCurrentPlugin()),
-                    variant: "contained",
-                    startIcon: <UploadIcon />
-                  },
-                  {
-                    label: "QTO öffnen",
-                    onClick: () => navigateToQto(getCurrentPlugin()),
-                    variant: "outlined",
-                    startIcon: <AssessmentIcon />
-                  }
-                ]}
-              />
-            ) : selectedProject && ebkpStats.length === 0 && !loadingElements ? (
-              <EmptyState
-                icon="assessment"
-                title="Noch keine bestätigten Mengen"
-                description="Für dieses Projekt sind noch keine bestätigten Mengen aus dem Mengen-Modul verfügbar. Bestätigen Sie zunächst die Mengen, damit die Kostenberechnung durchgeführt werden kann."
-                actions={[
-                  {
-                    label: "QTO öffnen",
-                    onClick: () => navigateToQto(getCurrentPlugin()),
-                    variant: "contained",
-                    startIcon: <AssessmentIcon />
-                  }
-                ]}
-              />
-            ) : (
-              <EbkpCostForm
-                stats={ebkpStats}
-                kennwerte={kennwerte}
-                onKennwertChange={(code: string, value: number) => {
-                  logger.debug(`Updating kennwert for ${code}: ${value}`);
-                  setKennwerte((prev) => ({ ...prev, [code]: value }))
-                }}
-                onQuantityTypeChange={handleQuantityTypeChange}
-                totalCost={totalCost}
-                elements={currentElements}
+        <div className="flex-grow px-10 pt-4 pb-10 flex flex-col">
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              mb: 2,
+              minHeight: "40px",
+            }}
+          >
+            {selectedProject && (
+              <ProjectMetadataDisplay
+                metadata={modelMetadata}
+                loading={loadingElements && !modelMetadata}
               />
             )}
 
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              {selectedProject && ebkpStats.length > 0 && (
+                <SmartExcelButton
+                  onExport={handleExcelExport}
+                  onImport={handleSmartExcelImport}
+                  isExporting={isExporting}
+                  isImporting={isImporting}
+                  lastExportTime={activity.lastExportTime}
+                  lastImportTime={activity.lastImportTime}
+                  exportCount={activity.exportCount}
+                  importCount={activity.importCount}
+                />
+              )}
 
-          </div>
+              {selectedProject && totalCost > 0 && (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<SendIcon />}
+                  onClick={handlePreviewCosts}
+                  sx={{
+                    fontWeight: 500,
+                    textTransform: "none",
+                    backgroundColor: "#0D0599",
+                    "&:hover": {
+                      backgroundColor: "#0A0477",
+                    },
+                  }}
+                >
+                  Kosten übermitteln
+                </Button>
+              )}
+            </Box>
+          </Box>
+
+          {projectsList.length === 0 && !loadingProjects ? (
+            <EmptyState
+              icon="folder"
+              title="Keine Projekte mit Kostendaten verfügbar"
+              description="Für die Kostenberechnung sind IFC-Dateien und bestätigte Mengen aus dem Mengen-Modul erforderlich. Laden Sie zunächst eine IFC-Datei über den IFC Uploader hoch und bestätigen Sie die Mengen, oder wenden Sie sich an die zuständige Person."
+              actions={[
+                {
+                  label: "IFC Uploader öffnen",
+                  onClick: () => navigateToIfcUploader(getCurrentPlugin()),
+                  variant: "contained",
+                  startIcon: <UploadIcon />
+                },
+                {
+                  label: "QTO öffnen",
+                  onClick: () => navigateToQto(getCurrentPlugin()),
+                  variant: "outlined",
+                  startIcon: <AssessmentIcon />
+                }
+              ]}
+            />
+          ) : selectedProject && ebkpStats.length === 0 && !loadingElements ? (
+            <EmptyState
+              icon="assessment"
+              title="Noch keine bestätigten Mengen"
+              description="Für dieses Projekt sind noch keine bestätigten Mengen aus dem Mengen-Modul verfügbar. Bestätigen Sie zunächst die Mengen, damit die Kostenberechnung durchgeführt werden kann."
+              actions={[
+                {
+                  label: "QTO öffnen",
+                  onClick: () => navigateToQto(getCurrentPlugin()),
+                  variant: "contained",
+                  startIcon: <AssessmentIcon />
+                }
+              ]}
+            />
+          ) : (
+            <EbkpCostForm
+              stats={ebkpStats}
+              kennwerte={kennwerte}
+              onKennwertChange={(code: string, value: number) => {
+                logger.debug(`Updating kennwert for ${code}: ${value}`);
+                setKennwerte((prev) => ({ ...prev, [code]: value }))
+              }}
+              onQuantityTypeChange={handleQuantityTypeChange}
+              totalCost={totalCost}
+              elements={currentElements}
+            />
+          )}
+
+
         </div>
-      
+      </div>
+
       <PreviewModal
         open={previewModalOpen}
         onClose={() => setPreviewModalOpen(false)}

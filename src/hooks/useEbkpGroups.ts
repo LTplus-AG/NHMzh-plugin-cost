@@ -5,7 +5,7 @@ import { EbkpStat } from '../components/EbkpCostForm';
 // Main EBKP group names mapping
 const EBKP_MAIN_GROUP_NAMES: Record<string, string> = {
   A: "Grundstück",
-  B: "Vorbereitung", 
+  B: "Vorbereitung",
   C: "Konstruktion",
   D: "Technik",
   E: "Äussere Wandbekleidung",
@@ -57,11 +57,11 @@ export const useEbkpGroups = (
 
     // Create hierarchical groups
     const hierarchicalMap = new Map<string, HierarchicalCostEbkpGroup>();
-    
+
     ebkpGroups.forEach((group) => {
       // Check if this is an EBKP code
       const mainGroup = getMainGroupFromEbkpCode(group.code);
-      
+
       if (mainGroup) {
         // It's an EBKP code - add to hierarchical structure
         if (!hierarchicalMap.has(mainGroup)) {
@@ -74,7 +74,7 @@ export const useEbkpGroups = (
             totalCost: 0,
           });
         }
-        
+
         const hierarchicalGroup = hierarchicalMap.get(mainGroup)!;
         hierarchicalGroup.subGroups.push(group);
         hierarchicalGroup.totalElements += group.elements.length;
@@ -92,7 +92,7 @@ export const useEbkpGroups = (
             totalCost: 0,
           });
         }
-        
+
         const otherGroup = hierarchicalMap.get("_OTHER_")!;
         otherGroup.subGroups.push(group);
         otherGroup.totalElements += group.elements.length;
