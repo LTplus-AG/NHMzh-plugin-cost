@@ -18,6 +18,14 @@ export const config = {
     broker: process.env.KAFKA_BROKER || 'broker:29092',
     costTopic: process.env.KAFKA_COST_TOPIC || 'cost-updates',
   },
+  keycloak: {
+    authority: process.env.KEYCLOAK_AUTHORITY || 'http://localhost:8080/realms/nhmzh',
+    clientId: process.env.KEYCLOAK_CLIENT_ID || 'plugin-cost',
+    clientSecret: process.env.KEYCLOAK_CLIENT_SECRET,
+  },
+  projectService: {
+    url: process.env.PROJECT_SERVICE_URL || 'http://localhost:3001',
+  },
   mongodb: {
     uri: MONGODB_URI || 
       `mongodb://${process.env.MONGODB_USERNAME || 'admin'}:${process.env.MONGODB_PASSWORD || 'admin'}@mongodb:27017/?authSource=admin`,

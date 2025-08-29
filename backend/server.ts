@@ -10,6 +10,13 @@ import timeout from "connect-timeout";
 import logger from './logger';
 
 import { config } from "./config";
+import { 
+  authMiddleware, 
+  requireReadPermission, 
+  requireWritePermission, 
+  requireProjectAccess,
+  User 
+} from "./auth-middleware";
 import {
   connectToMongoDB,
   getAllProjects,
@@ -90,6 +97,12 @@ app.use(defaultLimiter);
 // Parse JSON bodies
 app.use(express.json({ limit: "1mb" }));
 
+// --- Authentication Middleware ---
+// Apply authentication to all routes except health check
+app.use(authMiddleware({ optional: false }));
+// Skip authentication for health endpoint
+app.use("/health", authMiddleware({ optional: true }));
+
 // --- Input Validation Middleware ---
 const handleValidationErrors = (req: Request, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
@@ -122,10 +135,21 @@ async function loadUnitCostsFromDatabase(): Promise<void> {
 }
 
 // --- API Routes ---
-app.get("/projects", haltOnTimedout, async (req: Request, res: Response) => {
+app.get("/projects", haltOnTimedout, requireReadPermission, async (req: Request, res: Response) => {
   try {
-    const projects = await getAllProjects();
-    res.status(200).json(projects);
+    // Get user from request (added by auth middleware)
+    const user = req.user as User;
+    
+    // For admin users, return all projects
+    if (user.roles.includes('Admin')) {
+      const projects = await getAllProjects();
+      return res.status(200).json(projects);
+    }
+    
+    // For non-admin users, we need to filter projects based on user permissions
+    // This would require integration with the project service to get user's authorized projects
+    // For now, return empty array and let the project service handle project filtering
+    res.status(200).json([]);
   } catch (error) {
     logger.error("Error fetching projects:", error);
     res.status(500).json({ error: "Failed to get projects" });
@@ -136,6 +160,7 @@ app.get("/project-elements/:projectName",
   param('projectName').trim().notEmpty().withMessage('Project name is required'),
   handleValidationErrors,
   haltOnTimedout,
+  requireProjectAccess('read'),
   async (req: Request, res: Response) => {
     const { projectName } = req.params;
     try {
@@ -213,6 +238,7 @@ app.post("/save-kennwerte",
   body('kennwerte').isObject().withMessage('Kennwerte must be an object'),
   handleValidationErrors,
   haltOnTimedout,
+  requireWritePermission,
   async (req: Request, res: Response) => {
     const { projectName, kennwerte } = req.body;
     
@@ -244,6 +270,7 @@ app.post("/reapply-costs",
   body('projectName').trim().notEmpty().withMessage('Project name is required'),
   handleValidationErrors,
   haltOnTimedout,
+  requireWritePermission,
   async (req: Request, res: Response) => {
     const { projectName } = req.body;
     logger.info(`Re-applying costs for project: ${projectName}`);
@@ -270,6 +297,7 @@ app.post("/confirm-costs",
   body('project').optional().trim().notEmpty(),
   handleValidationErrors,
   haltOnTimedout,
+  requireWritePermission,
   async (req: Request<{}, {}, KafkaMessageBody>, res: Response) => {
     const kafkaMessage = req.body;
     
