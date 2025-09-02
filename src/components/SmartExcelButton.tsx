@@ -88,7 +88,7 @@ const SmartExcelButton: React.FC<Props> = ({
     handleClose();
     try {
       await onExport();
-    } catch (error) {
+    } catch {
       setProcessState('error');
       setToastMessage('Export fehlgeschlagen. Bitte versuchen Sie es erneut.');
       setToastSeverity('error');

@@ -145,7 +145,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
    // Memoize filtered and sorted elements for performance
   const processedElements = useMemo(() => {
     // Filter elements if showing only failing ones
-    let filteredElements = showOnlyFailing 
+    const filteredElements = showOnlyFailing 
       ? group.elements.filter(element => isZeroQuantity(getElementQuantityValue(element, selectedQuantityType)))
       : [...group.elements];
 

@@ -32,6 +32,7 @@ import WarningIcon from "@mui/icons-material/Warning";
 import InfoIcon from "@mui/icons-material/Info";
 import { MetaFile, CostItem } from "./types";
 import { useApi } from "../../contexts/ApiContext";
+import logger from "../../utils/logger";
 
 // Define a more specific type for the enhanced data passed to onConfirm
 // Based on the structure created in handleConfirm
@@ -236,7 +237,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
         const costCodes = JSON.parse(costCodesStr);
         currentElementInfo.costCodes = costCodes;
       } catch (e) {
-        console.error("Error parsing cost codes from DOM", e);
+        logger.error("Error parsing cost codes from DOM", e);
       }
     }
     // If we still don't have any codes, use the eBKP codes from the Excel file

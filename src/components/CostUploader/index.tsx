@@ -312,7 +312,7 @@ const CostUploader = ({
       try {
         await costApi.getProjects();
         // ... (handle project data)
-      } catch (error) {
+      } catch {
         // ... (handle error)
       }
     }

@@ -558,9 +558,7 @@ const MainPage = () => {
         return;
       }
 
-    // Debug logging
-    logger.info("ModelMetadata:", modelMetadata);
-    logger.info("Upload timestamp:", modelMetadata.upload_timestamp);
+
 
     interface KafkaElementCost {
       id: string;
@@ -984,7 +982,6 @@ const MainPage = () => {
                 stats={ebkpStats}
                 kennwerte={kennwerte}
                 onKennwertChange={(code: string, value: number) => {
-                  logger.debug(`Updating kennwert for ${code}: ${value}`);
                   setKennwerte((prev) => ({ ...prev, [code]: value }))
                 }}
                 onQuantityTypeChange={handleQuantityTypeChange}

@@ -101,7 +101,7 @@ const ExcelDialog: React.FC<Props> = ({
   const [importResult, setImportResult] = useState<ExcelImportResult | null>(null);
   const [importStep, setImportStep] = useState(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewData, setPreviewData] = useState<any[]>([]);
+  const [previewData, setPreviewData] = useState<Record<string, unknown>[]>([]);
 
   // Update internal config when external config changes
   React.useEffect(() => {
@@ -380,14 +380,14 @@ const ExcelDialog: React.FC<Props> = ({
                                     </TableRow>
                                   </TableHead>
                                   <TableBody>
-                                    {previewData.map((row, index) => (
-                                      <TableRow key={index}>
-                                        <TableCell>{row.ebkpCode}</TableCell>
-                                        <TableCell align="right">
-                                          {row.kennwert !== null && row.kennwert !== undefined ? row.kennwert.toFixed(2) : '-'}
-                                        </TableCell>
-                                      </TableRow>
-                                    ))}
+                                                                         {previewData.map((row, index) => (
+                                       <TableRow key={index}>
+                                         <TableCell>{String(row.ebkpCode ?? '')}</TableCell>
+                                         <TableCell align="right">
+                                           {typeof row.kennwert === 'number' ? row.kennwert.toFixed(2) : '-'}
+                                         </TableCell>
+                                       </TableRow>
+                                     ))}
                                   </TableBody>
                                 </Table>
                               </TableContainer>

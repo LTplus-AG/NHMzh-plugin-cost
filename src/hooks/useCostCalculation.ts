@@ -39,11 +39,9 @@ export const useCostCalculation = (
       0
     );
 
-    // We still might want the flat list for other purposes, so calculate it separately.
     const flatItems = getAllItems(hierarchicalData);
 
-    // Optional: Log calculation details here if needed during debugging
-    // console.log('[useCostCalculation]', { totalCost, topLevelItemCount: hierarchicalData.length, totalFlatItemCount: flatItems.length });
+
 
     return { totalCost, flatItems };
   }, [hierarchicalData]); // Dependency array includes the hierarchical data
@@ -51,5 +49,4 @@ export const useCostCalculation = (
   return calculationResult;
 };
 
-// Optional: Export getAllItems if needed elsewhere, otherwise keep it local.
-// export { getAllItems };
+
