@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   TableRow,
   TableCell,
@@ -16,8 +16,9 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { CostItem } from "./types";
 import { getColumnStyle, columnWidths } from "./styles";
 import { tableStyle } from "./styles";
-import CostTableGrandchildRow from "./CostTableGrandchildRow.tsx";
+import CostTableGrandchildRow from "./CostTableGrandchildRow";
 import { useApi } from "../../contexts/ApiContext";
+import { computeItemTotal, aggregateChildTotals, generateItemSignature } from "../../utils/costTotals";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -34,8 +35,6 @@ interface CellStyles {
 // Added interface for reducer accumulator
 interface ChildTotals {
   area: number;
-  cost: number;
-  chf: number;
   elementCount: number;
 }
 
@@ -67,8 +66,7 @@ const CostTableChildRow = ({
   const [hasQtoInTreeState, setHasQtoInTreeState] = useState<boolean>(false);
 
   // Get the Kafka context
-  const { replaceEbkpPlaceholders, calculateUpdatedChf, formatTimestamp } =
-    useApi();
+  const { replaceEbkpPlaceholders, formatTimestamp } = useApi();
 
   // Update the hasQtoData function to check for IFC data
   const hasQtoData = (item: CostItem): boolean => {
@@ -142,46 +140,9 @@ const CostTableChildRow = ({
     return "m²";
   };
 
-  // Update the calculateTotalsFromChildren function to handle grandchild sums
+  // Use shared utility to calculate totals from children
   const calculateTotalsFromChildren = (item: CostItem): ChildTotals => {
-    if (!item.children || item.children.length === 0) {
-      return { area: 0, cost: 0, chf: 0, elementCount: 0 };
-    }
-
-    return item.children.reduce<ChildTotals>(
-      (acc, child) => {
-        // If child has direct area from MongoDB, add it
-        if (child.area !== undefined) {
-          acc.area += child.area;
-          acc.cost += child.area * (child.kennwert || 0);
-          acc.chf += child.area * (child.kennwert || 0);
-          // Only count elements at the leaf level (no children)
-          if (!child.children || child.children.length === 0) {
-            acc.elementCount += child.element_count || 1;
-          }
-        }
-        // If child has its own children (grandchildren), add their totals
-        if (child.children && child.children.length > 0) {
-          const childTotals = calculateTotalsFromChildren(child);
-          acc.area += childTotals.area;
-          acc.cost += childTotals.cost;
-          acc.chf += childTotals.chf;
-          acc.elementCount += childTotals.elementCount;
-        }
-        // If child has no IFC data but has a menge, add it
-        if (child.area === undefined && child.menge !== undefined) {
-          acc.area += child.menge || 0;
-          acc.cost += (child.menge || 0) * (child.kennwert || 0);
-          acc.chf += (child.menge || 0) * (child.kennwert || 0);
-          // Only count non-IFC items at the leaf level
-          if (!child.children || child.children.length === 0) {
-            acc.elementCount += 1;
-          }
-        }
-        return acc;
-      },
-      { area: 0, cost: 0, chf: 0, elementCount: 0 }
-    );
+    return aggregateChildTotals(item);
   };
 
   // Update the getMengeValue function to use grandchild sums
@@ -198,18 +159,17 @@ const CostTableChildRow = ({
     return originalMenge;
   };
 
-  // Update the getChfValue function to use grandchild sums
+  // Generate stable signature for deep change detection
+  const itemSignature = useMemo(() => generateItemSignature(item), [item]);
+
+  // Memoized CHF calculation to avoid repeated deep traversals
+  const chfValue = useMemo(() => {
+    return computeItemTotal(item);
+  }, [itemSignature]); // Use stable signature to detect deep changes
+
+  // Update the getChfValue function to use memoized value
   const getChfValue = () => {
-    // Calculate total cost from grandchildren
-    const { chf } = calculateTotalsFromChildren(item);
-
-    // If we have a total cost from grandchildren, use it
-    if (chf > 0) {
-      return chf;
-    }
-
-    // Fallback to original calculation
-    return calculateUpdatedChf(item);
+    return chfValue;
   };
 
   // Get info about QTO data for this item
@@ -280,13 +240,13 @@ const CostTableChildRow = ({
           backgroundColor: hasQtoData(item)
             ? "rgba(25, 118, 210, 0.03)"
             : hasQtoInTree
-            ? "rgba(25, 118, 210, 0.015)"
-            : undefined,
+              ? "rgba(25, 118, 210, 0.015)"
+              : undefined,
           borderLeft: hasQtoData(item)
             ? "2px solid rgba(25, 118, 210, 0.4)"
             : hasQtoInTree
-            ? "2px solid rgba(25, 118, 210, 0.2)"
-            : "none",
+              ? "2px solid rgba(25, 118, 210, 0.2)"
+              : "none",
         }}
       >
         <TableCell sx={{ padding: isMobile ? "8px 4px" : undefined }}>
@@ -307,12 +267,12 @@ const CostTableChildRow = ({
                 sx={
                   hasQtoInTree && !hasQtoData(item)
                     ? {
-                        color: !expanded ? "info.main" : undefined,
-                        opacity: !expanded ? 0.8 : 0.6,
-                        border: !expanded
-                          ? "1px solid rgba(25, 118, 210, 0.2)"
-                          : "none",
-                      }
+                      color: !expanded ? "info.main" : undefined,
+                      opacity: !expanded ? 0.8 : 0.6,
+                      border: !expanded
+                        ? "1px solid rgba(25, 118, 210, 0.2)"
+                        : "none",
+                    }
                     : {}
                 }
               >
@@ -444,7 +404,7 @@ const CostTableChildRow = ({
                 />
               </Tooltip>
             ) : (
-              <>{renderNumber(item.totalChf)}</>
+              <>{renderNumber(getChfValue())}</>
             )}
           </Box>
         </TableCell>

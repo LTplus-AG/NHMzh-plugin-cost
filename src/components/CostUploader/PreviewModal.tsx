@@ -32,6 +32,7 @@ import WarningIcon from "@mui/icons-material/Warning";
 import InfoIcon from "@mui/icons-material/Info";
 import { MetaFile, CostItem } from "./types";
 import { useApi } from "../../contexts/ApiContext";
+import { computeItemTotal } from "../../utils/costTotals";
 
 // Define a more specific type for the enhanced data passed to onConfirm
 // Based on the structure created in handleConfirm
@@ -548,8 +549,8 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
       if (!groups[groupKey]) {
         groups[groupKey] = 0;
       }
-      // Sum the final chf of this leaf item
-      groups[groupKey] += item.chf || item.totalChf || 0;
+      // Sum the total using current unit price and quantity
+      groups[groupKey] += computeItemTotal(item);
     });
 
     // Filter out zero values before returning

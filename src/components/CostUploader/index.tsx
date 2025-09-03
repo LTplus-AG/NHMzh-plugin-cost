@@ -311,9 +311,8 @@ const CostUploader = ({
     async function fetchProjects() {
       try {
         await costApi.getProjects();
-        // ... (handle project data)
       } catch (error) {
-        // ... (handle error)
+        logger.error("Failed to fetch projects:", error);
       }
     }
     fetchProjects();

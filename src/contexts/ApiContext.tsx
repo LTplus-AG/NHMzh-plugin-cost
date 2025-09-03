@@ -10,6 +10,7 @@ import logger from '../utils/logger';
 import { CostItem } from "../components/CostUploader/types";
 import { costApi } from "../services/costApi";
 import type { BackendElement as ApiBackendElement } from "../services/costApi";
+import { computeItemTotal } from "../utils/costTotals";
 
 // Define types for cost items
 interface MongoElement {
@@ -254,8 +255,7 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
 
   // Function to calculate updated CHF value
   const calculateUpdatedChf = (item: CostItem): number => {
-    if (!item.menge || !item.kennwert) return 0;
-    return item.menge * item.kennwert;
+    return computeItemTotal(item);
   };
 
   // Function to format timestamp

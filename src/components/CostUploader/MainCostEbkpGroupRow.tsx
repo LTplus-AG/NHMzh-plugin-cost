@@ -73,18 +73,55 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
     return total + elementsWithZeroQuantity.length;
   }, 0);
 
+  // Memoized unit analysis for consistent units check and most common unit
+  const unitAnalysis = React.useMemo(() => {
+    const units = new Set<string>();
+    let totalSubgroups = 0;
+
+    for (const subGroup of group.subGroups) {
+      const selectedType = subGroup.selectedQuantityType || subGroup.availableQuantities[0]?.type;
+      const selectedQty = subGroup.availableQuantities.find(q => q.type === selectedType);
+      if (selectedQty?.unit) {
+        units.add(selectedQty.unit);
+        totalSubgroups++;
+      }
+    }
+
+    // Check if all subgroups have the same unit
+    const hasUniformUnits = units.size === 1 && totalSubgroups > 0;
+    const uniformUnit = hasUniformUnits ? Array.from(units)[0] : '';
+
+    return {
+      hasUniformUnits,
+      uniformUnit,
+      uniqueUnitsCount: units.size,
+      totalSubgroups
+    };
+  }, [group.subGroups]);
+
+  // Extract values for easier access
+  const { hasUniformUnits, uniformUnit, uniqueUnitsCount, totalSubgroups } = unitAnalysis;
+
   return (
     <>
       {/* Main Group Header Row */}
-      <Tooltip 
-        title={hasZeroQuantity ? `Enthält Elemente ohne Mengen - Hauptgruppe ${group.mainGroup}` : ''}
+      <Tooltip
+        title={
+          hasZeroQuantity
+            ? `Enthält Elemente ohne Mengen - Hauptgruppe ${group.mainGroup}`
+            : !hasUniformUnits && totalSubgroups > 1
+              ? `Verschiedene Einheiten (${uniqueUnitsCount} verschiedene) - Summierung nicht möglich`
+              : hasUniformUnits
+                ? `Einheitliche Einheit: ${uniformUnit}`
+                : ''
+        }
         arrow
         placement="left"
       >
-        <TableRow 
-          sx={getZeroQuantityStyles(hasZeroQuantity, { 
+        <TableRow
+          sx={getZeroQuantityStyles(hasZeroQuantity, {
             backgroundColor: isExpanded ? 'rgba(25, 118, 210, 0.08)' : 'rgba(0, 0, 0, 0.04)',
-            "&:hover": { 
+            "&:hover": {
               backgroundColor: isExpanded ? 'rgba(25, 118, 210, 0.12)' : 'rgba(0, 0, 0, 0.08)'
             },
             cursor: 'pointer',
@@ -115,7 +152,7 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
                 {group.mainGroup === "_OTHER_" ? "Sonstige Klassifikationen" : group.mainGroupName}
               </Typography>
               <Box sx={{ ml: 1, display: 'flex', flexDirection: 'column' }}>
-                <Typography variant="body2" sx={{ 
+                <Typography variant="body2" sx={{
                   color: "text.secondary",
                   fontSize: "0.8rem",
                   fontWeight: 500
@@ -123,8 +160,8 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
                   {group.subGroups.length} Gruppen • {group.totalElements} Elemente
                 </Typography>
                 {totalElementsWithMissingQuantities > 0 && (
-                  <Typography variant="caption" sx={{ 
-                    color: 'warning.main', 
+                  <Typography variant="caption" sx={{
+                    color: 'warning.main',
                     fontWeight: 'bold',
                     fontSize: '0.65rem'
                   }}>
@@ -135,11 +172,13 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
             </Box>
           </TableCell>
           <TableCell sx={{ py: 2, textAlign: "right" }}>
-            <Typography variant="body2" sx={{ 
-              fontWeight: hasZeroQuantity ? 'bold' : 'medium',
+            <Typography variant="body2" sx={{
+              fontWeight: hasZeroQuantity ? 'bold' : 500,
               color: hasZeroQuantity ? 'warning.main' : 'inherit'
             }}>
-              {formatQuantity(group.totalQuantity)} m²
+              {hasUniformUnits
+                ? `${formatQuantity(group.totalQuantity)} ${uniformUnit}`
+                : 'Verschiedene Einheiten'}
             </Typography>
           </TableCell>
           <TableCell sx={{ py: 2, textAlign: "right" }}>
@@ -157,12 +196,12 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
 
       {/* Collapsible Sub-Groups */}
       <TableRow>
-        <TableCell 
-          colSpan={4} 
-          sx={{ 
-            py: 0, 
+        <TableCell
+          colSpan={4}
+          sx={{
+            py: 0,
             border: "none",
-            backgroundColor: "transparent" 
+            backgroundColor: "transparent"
           }}
         >
           <Collapse in={isExpanded} timeout="auto" unmountOnExit>

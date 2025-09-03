@@ -95,13 +95,13 @@ const ExcelDialog: React.FC<Props> = ({
       fileName: `Kostenkennwerte_${new Date().toISOString().split('T')[0]}`
     }
   );
-  
+
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importResult, setImportResult] = useState<ExcelImportResult | null>(null);
   const [importStep, setImportStep] = useState(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewData, setPreviewData] = useState<any[]>([]);
+  const [previewData, setPreviewData] = useState<Array<{ ebkpCode: string; kennwert: number | null | undefined }>>([]);
 
   // Update internal config when external config changes
   React.useEffect(() => {
@@ -149,13 +149,13 @@ const ExcelDialog: React.FC<Props> = ({
 
   const handleImport = useCallback(async () => {
     if (!selectedFile) return;
-    
+
     setIsImporting(true);
     try {
       const result = await ExcelService.importFromExcel(selectedFile);
       setImportResult(result);
       setImportStep(2);
-      
+
       if (result.success) {
         // Generate preview data
         const preview = result.data.slice(0, 10).map(item => ({
@@ -179,17 +179,17 @@ const ExcelDialog: React.FC<Props> = ({
 
   const handleApplyImport = useCallback(() => {
     if (!importResult?.success) return;
-    
+
     const newKennwerte: Record<string, number> = {};
     importResult.data.forEach(item => {
       if (item.kennwert !== undefined && item.kennwert !== null) {
         newKennwerte[item.groupKey] = item.kennwert;
       }
     });
-    
+
     onImportData(newKennwerte);
     setImportStep(3);
-    
+
     // Close dialog after a brief delay
     setTimeout(() => {
       onClose();
@@ -227,34 +227,34 @@ const ExcelDialog: React.FC<Props> = ({
           <Close />
         </IconButton>
       </DialogTitle>
-      
+
       <DialogContent sx={{ p: 0 }}>
         <Tabs value={activeTab} onChange={handleTabChange} sx={{ borderBottom: 1, borderColor: 'divider' }}>
-          <Tab 
-            label="Export" 
-            icon={<FileDownload />} 
+          <Tab
+            label="Export"
+            icon={<FileDownload />}
             iconPosition="start"
             sx={{ minHeight: 60 }}
           />
-          <Tab 
-            label="Import" 
-            icon={<FileUpload />} 
+          <Tab
+            label="Import"
+            icon={<FileUpload />}
             iconPosition="start"
             sx={{ minHeight: 60 }}
           />
         </Tabs>
 
-                <TabPanel value={activeTab} index={0}>
+        <TabPanel value={activeTab} index={0}>
           <Box sx={{ px: 3 }}>
             <Typography variant="h6" sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
               <Settings />
               Excel Export
             </Typography>
-            
+
             <Alert severity="info" sx={{ mb: 3 }}>
               Exportiert alle eBKP-Codes mit aktuellen Kennwerten. Sie können die Kennwerte in Excel bearbeiten und dann wieder importieren.
             </Alert>
-            
+
             <Box sx={{ mb: 4 }}>
               <TextField
                 label="Dateiname"
@@ -311,8 +311,8 @@ const ExcelDialog: React.FC<Props> = ({
                       </Button>
                     </label>
                     {selectedFile && (
-                      <Chip 
-                        label={selectedFile.name} 
+                      <Chip
+                        label={selectedFile.name}
                         onDelete={() => setSelectedFile(null)}
                         color="primary"
                       />
@@ -351,7 +351,7 @@ const ExcelDialog: React.FC<Props> = ({
                           <Alert severity="success" sx={{ mb: 2 }}>
                             <strong>{importResult.data.length} Datensätze</strong> erfolgreich gelesen
                           </Alert>
-                          
+
                           {importResult.warnings.length > 0 && (
                             <Alert severity="warning" sx={{ mb: 2 }}>
                               <Typography variant="subtitle2">Warnungen:</Typography>

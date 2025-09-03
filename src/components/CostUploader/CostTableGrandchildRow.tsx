@@ -1,10 +1,11 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { TableRow, TableCell, Box, Tooltip, Chip } from "@mui/material";
 import SyncIcon from "@mui/icons-material/Sync";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { CostItem } from "./types";
 import { getColumnStyle } from "./styles";
 import { useApi } from "../../contexts/ApiContext";
+import { computeItemTotal, generateItemSignature } from "../../utils/costTotals";
 
 // Define a proper type for cellStyles instead of using any
 interface CellStyles {
@@ -36,8 +37,7 @@ const CostTableGrandchildRow = ({
   totalElements,
 }: CostTableGrandchildRowProps) => {
   // Get the Kafka context
-  const { replaceEbkpPlaceholders, calculateUpdatedChf, formatTimestamp } =
-    useApi();
+  const { replaceEbkpPlaceholders, formatTimestamp } = useApi();
 
   // Check if this item has QTO data from MongoDB
   const hasQtoData = (item: CostItem): boolean => {
@@ -61,18 +61,17 @@ const CostTableGrandchildRow = ({
     return originalMenge;
   };
 
+  // Generate stable signature for deep change detection
+  const itemSignature = useMemo(() => generateItemSignature(item), [item]);
+
+  // Memoized CHF calculation to avoid repeated deep traversals
+  const chfValue = useMemo(() => {
+    return computeItemTotal(item);
+  }, [itemSignature]); // Use stable signature to detect deep changes
+
   // Get CHF value - calculate based on area when available
   const getChfValue = () => {
-    // If item has area from MongoDB
-    if (
-      item.area !== undefined &&
-      item.kennwert !== null &&
-      item.kennwert !== undefined
-    ) {
-      return item.area * item.kennwert;
-    }
-
-    return calculateUpdatedChf(item);
+    return chfValue;
   };
 
   // Get element count for this item
@@ -293,7 +292,7 @@ const CostTableGrandchildRow = ({
               />
             </Tooltip>
           ) : (
-            <>{renderNumber(item.totalChf)}</>
+            <>{renderNumber(getChfValue())}</>
           )}
         </Box>
       </TableCell>
