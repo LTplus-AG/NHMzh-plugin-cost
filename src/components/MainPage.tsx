@@ -530,7 +530,7 @@ const MainPage = () => {
     logger.info("Upload timestamp:", modelMetadata.upload_timestamp);
 
     interface KafkaElementCost {
-      id: string;
+      global_id: string;  // Changed from id to global_id
       cost: number;
       cost_unit: number;
     }
@@ -546,7 +546,7 @@ const MainPage = () => {
               quantitySelections[stat.code]
             );
             costDataPayload.push({
-              id: element.global_id,
+              global_id: element.global_id,  // Changed from id to global_id
               cost: selectedQty.value * unitCost,
               cost_unit: unitCost,
             });

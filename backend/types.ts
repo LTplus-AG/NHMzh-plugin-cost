@@ -55,6 +55,7 @@ export interface CostData {
   _id: ObjectId;
   project_id: ObjectId;
   element_id?: ObjectId;
+  global_id?: string;
   ebkp_code: string;
   unit_cost: number;
   quantity: number;
@@ -126,7 +127,7 @@ export interface EnhancedCostItem {
 
 // Kafka-related interfaces
 export interface CostDataKafka {
-  id: string;
+  id: string;  // CRITICAL: Must be 'id' for Kafka consumers (internal DB uses global_id)
   cost: number;
   cost_unit: number;
 }

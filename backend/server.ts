@@ -33,6 +33,10 @@ const producer: Producer = new Kafka({
 
 let costProducerConnected = false;
 
+// --- Debug: Store last sent Kafka messages ---
+const lastKafkaMessages: Array<{ timestamp: Date; topic: string; project: string; count: number; sample: any }> = [];
+const MAX_STORED_MESSAGES = 50;
+
 // --- Security Middleware ---
 // Add helmet for security headers
 app.use(helmet({
@@ -273,6 +277,12 @@ app.post("/confirm-costs",
   async (req: Request<{}, {}, KafkaMessageBody>, res: Response) => {
     const kafkaMessage = req.body;
     
+    // CRITICAL: Kafka format uses 'id' field (internal DB uses global_id)
+    // No transformation needed - just forward as-is
+    if (!kafkaMessage.data) {
+      return res.status(400).json({ status: "error", error: "Missing data array" });
+    }
+    
     try {
       // Send to Kafka
       await producer.send({
@@ -287,6 +297,18 @@ app.post("/confirm-costs",
       
       logger.info(`Sent ${kafkaMessage.data.length} cost elements to Kafka for project ${kafkaMessage.project}`);
       
+      // Store for debugging
+      lastKafkaMessages.unshift({
+        timestamp: new Date(),
+        topic: config.kafka.costTopic,
+        project: kafkaMessage.project || "unknown",
+        count: kafkaMessage.data.length,
+        sample: kafkaMessage.data.slice(0, 5) // Store first 5 elements as sample
+      });
+      if (lastKafkaMessages.length > MAX_STORED_MESSAGES) {
+        lastKafkaMessages.pop();
+      }
+      
       res.status(200).json({
         status: "success",
         message: `Successfully sent ${kafkaMessage.data.length} cost elements`,
@@ -299,6 +321,24 @@ app.post("/confirm-costs",
         error: "Failed to send cost data to Kafka" 
       });
     }
+  }
+);
+
+// --- Debug Endpoint: View Last Kafka Messages ---
+app.get("/debug/kafka-messages",
+  async (req: Request, res: Response) => {
+    res.status(200).json({
+      service: "cost-service",
+      kafka_topic: config.kafka.costTopic,
+      total_stored: lastKafkaMessages.length,
+      messages: lastKafkaMessages.map(msg => ({
+        timestamp: msg.timestamp.toISOString(),
+        topic: msg.topic,
+        project: msg.project,
+        element_count: msg.count,
+        sample_elements: msg.sample
+      }))
+    });
   }
 );
 

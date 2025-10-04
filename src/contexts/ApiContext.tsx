@@ -324,7 +324,7 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
     }
 
     return {
-      id: el.global_id || el.id || el._id || "",
+      global_id: el.global_id || el._id || "",  // Always use global_id
       ebkpCode: ebkpCode,
       quantity: typeof el.quantity === 'object' ? el.quantity : undefined,
       area: area,

@@ -385,16 +385,27 @@ export async function getElementsByProject(projectId: string): Promise<QtoElemen
 /**
  * Get cost data for an element
  */
-export async function getCostDataForElement(elementId: string): Promise<CostData | null> {
+export async function getCostDataForElement(identifier: string): Promise<CostData | null> {
   await ensureConnection();
 
   try {
     if (!costDb) {
       throw new Error("Cost database not initialized");
     }
-    return await costDb.collection<CostData>("costData").findOne({
-      element_id: new ObjectId(elementId),
+    
+    // Try to find by global_id first
+    let result = await costDb.collection<CostData>("costData").findOne({
+      global_id: identifier
     });
+    
+    // If not found and identifier is a valid ObjectId, try element_id
+    if (!result && ObjectId.isValid(identifier)) {
+      result = await costDb.collection<CostData>("costData").findOne({
+        element_id: new ObjectId(identifier)
+      });
+    }
+    
+    return result;
   } catch (error) {
     logger.error("Error getting cost data for element:", error);
     return null;
@@ -619,18 +630,26 @@ export async function getAllElementsForProject(projectName: string): Promise<any
 
     // Get cost data for these elements
     const elementIds = elements.map((e) => e._id);
+    const globalIds = elements.map((e) => e.global_id).filter(id => id);
+    
+    // Search for both global_id and element_id
     const costData = await costDb
       .collection<CostData>("costData")
       .find({
-        element_id: { $in: elementIds },
+        $or: [
+          { global_id: { $in: globalIds } },
+          { element_id: { $in: elementIds } }
+        ]
       })
       .toArray();
 
     // Create a map of cost data by element ID for quick lookup
     const costDataMap: Record<string, CostData> = {};
     costData.forEach((cost) => {
-      if (cost.element_id) {
-        costDataMap[cost.element_id.toString()] = cost;
+      // Use global_id if available, otherwise element_id
+      const key = cost.global_id || cost.element_id?.toString();
+      if (key) {
+        costDataMap[key] = cost;
       }
     });
 
@@ -1075,16 +1094,15 @@ export async function saveCostDataBatch(
           };
           costElementsToSave.push(costElementDoc);
 
-          // Add to Kafka list using QTO element's ID
-          const kafkaMessageElementId =
-            qtoElement.global_id || qtoElement._id.toString();
-          if (!processedKafkaIds.has(kafkaMessageElementId)) {
+          // Add to Kafka list using QTO element's global_id (map to 'id' for Kafka format)
+          const kafkaGlobalId = qtoElement.global_id;
+          if (kafkaGlobalId && !processedKafkaIds.has(kafkaGlobalId)) {
             elementsForKafka.push({
-              id: kafkaMessageElementId,
+              id: kafkaGlobalId,  // CRITICAL: Kafka consumers expect 'id' field
               cost: elementTotalCost,
               cost_unit: unitCost,
             });
-            processedKafkaIds.add(kafkaMessageElementId);
+            processedKafkaIds.add(kafkaGlobalId);
           }
           processedBimCount++;
         } else {
@@ -1182,14 +1200,15 @@ export async function saveCostDataBatch(
           costDataId = costDataDoc._id.toString();
         }
 
-        // Add leaf Excel item to Kafka using costData ID
-        if (costDataId && !processedKafkaIds.has(costDataId)) {
+        // Add leaf Excel item to Kafka using global_id or costData ID (map to 'id' for Kafka format)
+        const kafkaGlobalId = costDataDoc.global_id || costDataId;
+        if (kafkaGlobalId && !processedKafkaIds.has(kafkaGlobalId)) {
           elementsForKafka.push({
-            id: costDataId,
+            id: kafkaGlobalId,  // CRITICAL: Kafka consumers expect 'id' field
             cost: itemCostValue,
             cost_unit: costDataDoc.unit_cost || excelItem.kennwert || 0,
           });
-          processedKafkaIds.add(costDataId);
+          processedKafkaIds.add(kafkaGlobalId);
           processedExcelOnlyCount++;
         }
       }
