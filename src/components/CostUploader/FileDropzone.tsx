@@ -33,7 +33,6 @@ const FileDropzone = ({ onFileSelected }: FileDropzoneProps) => {
         onFileSelected(file); // Pass the raw file up
       } else {
         console.warn("Invalid file type selected:", file.type);
-        // TODO: Add user feedback for invalid file type
       }
     },
     [onFileSelected]

@@ -1,27 +1,25 @@
-import { Kafka, Producer } from "kafkajs";
-import http from "http";
-import dotenv from "dotenv";
-import express, { Request, Response, NextFunction } from "express";
-import cors from "cors";
-import rateLimit from "express-rate-limit";
-import helmet from "helmet";
-import { body, param, validationResult } from "express-validator";
 import timeout from "connect-timeout";
+import cors from "cors";
+import dotenv from "dotenv";
+import express, { NextFunction, Request, Response } from "express";
+import rateLimit from "express-rate-limit";
+import { body, param, validationResult } from "express-validator";
+import helmet from "helmet";
+import http from "http";
+import { Kafka, Producer } from "kafkajs";
 import logger from './logger';
 
 import { config } from "./config";
 import {
   connectToMongoDB,
-  getAllProjects,
   getAllElementsForProject,
+  getAllProjects,
   getCostDb,
-  getProjectsCollection,
-  getElementsCollection,
   getKennwerteCollection,
-  getCostElementsCollection,
+  getProjectsCollection
 } from "./mongodb";
 
-import { ElementsResponse, Kennwerte } from "./types";
+import { ElementsResponse } from "./types";
 
 dotenv.config();
 
@@ -33,9 +31,6 @@ const producer: Producer = new Kafka({
 
 let costProducerConnected = false;
 
-// --- Debug: Store last sent Kafka messages ---
-const lastKafkaMessages: Array<{ timestamp: Date; topic: string; project: string; count: number; sample: any }> = [];
-const MAX_STORED_MESSAGES = 50;
 
 // --- Security Middleware ---
 // Add helmet for security headers
@@ -257,7 +252,9 @@ app.post("/reapply-costs",
 );
 
 interface KafkaMessageData {
-  id: string;
+  global_id: string;
+  cost: number;
+  cost_unit: number;
   [key: string]: any;
 }
 
@@ -270,18 +267,29 @@ interface KafkaMessageBody {
 app.post("/confirm-costs", 
   strictLimiter,
   body('data').isArray().withMessage('Data must be an array'),
-  body('data.*.id').notEmpty().withMessage('Each element must have an id'),
+  body('data.*.global_id').notEmpty().withMessage('Each element must have a global_id'),
   body('project').optional().trim().notEmpty(),
   handleValidationErrors,
   haltOnTimedout,
   async (req: Request<{}, {}, KafkaMessageBody>, res: Response) => {
     const kafkaMessage = req.body;
     
-    // CRITICAL: Kafka format uses 'id' field (internal DB uses global_id)
-    // No transformation needed - just forward as-is
+    // CRITICAL: Transform global_id to id for Kafka compatibility
     if (!kafkaMessage.data) {
       return res.status(400).json({ status: "error", error: "Missing data array" });
     }
+    
+    // Transform global_id to id for Kafka message
+    const transformedData = kafkaMessage.data.map(item => ({
+      id: item.global_id,  // Transform global_id to id for Kafka
+      cost: item.cost,
+      cost_unit: item.cost_unit
+    }));
+    
+    const kafkaPayload = {
+      ...kafkaMessage,
+      data: transformedData
+    };
     
     try {
       // Send to Kafka
@@ -290,24 +298,13 @@ app.post("/confirm-costs",
         messages: [
           {
             key: kafkaMessage.project || "unknown",
-            value: JSON.stringify(kafkaMessage),
+            value: JSON.stringify(kafkaPayload),
           },
         ],
       });
       
       logger.info(`Sent ${kafkaMessage.data.length} cost elements to Kafka for project ${kafkaMessage.project}`);
       
-      // Store for debugging
-      lastKafkaMessages.unshift({
-        timestamp: new Date(),
-        topic: config.kafka.costTopic,
-        project: kafkaMessage.project || "unknown",
-        count: kafkaMessage.data.length,
-        sample: kafkaMessage.data.slice(0, 5) // Store first 5 elements as sample
-      });
-      if (lastKafkaMessages.length > MAX_STORED_MESSAGES) {
-        lastKafkaMessages.pop();
-      }
       
       res.status(200).json({
         status: "success",
@@ -324,23 +321,6 @@ app.post("/confirm-costs",
   }
 );
 
-// --- Debug Endpoint: View Last Kafka Messages ---
-app.get("/debug/kafka-messages",
-  async (req: Request, res: Response) => {
-    res.status(200).json({
-      service: "cost-service",
-      kafka_topic: config.kafka.costTopic,
-      total_stored: lastKafkaMessages.length,
-      messages: lastKafkaMessages.map(msg => ({
-        timestamp: msg.timestamp.toISOString(),
-        topic: msg.topic,
-        project: msg.project,
-        element_count: msg.count,
-        sample_elements: msg.sample
-      }))
-    });
-  }
-);
 
 // --- Health Check ---
 app.get("/health", (req: Request, res: Response) => {
