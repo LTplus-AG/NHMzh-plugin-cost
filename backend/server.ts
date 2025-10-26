@@ -1,27 +1,25 @@
-import { Kafka, Producer } from "kafkajs";
-import http from "http";
-import dotenv from "dotenv";
-import express, { Request, Response, NextFunction } from "express";
-import cors from "cors";
-import rateLimit from "express-rate-limit";
-import helmet from "helmet";
-import { body, param, validationResult } from "express-validator";
 import timeout from "connect-timeout";
+import cors from "cors";
+import dotenv from "dotenv";
+import express, { NextFunction, Request, Response } from "express";
+import rateLimit from "express-rate-limit";
+import { body, param, validationResult } from "express-validator";
+import helmet from "helmet";
+import http from "http";
+import { Kafka, Producer } from "kafkajs";
 import logger from './logger';
 
 import { config } from "./config";
 import {
   connectToMongoDB,
-  getAllProjects,
   getAllElementsForProject,
+  getAllProjects,
   getCostDb,
-  getProjectsCollection,
-  getElementsCollection,
   getKennwerteCollection,
-  getCostElementsCollection,
+  getProjectsCollection
 } from "./mongodb";
 
-import { ElementsResponse, Kennwerte } from "./types";
+import { CostDataKafka, ElementsResponse } from "./types";
 
 dotenv.config();
 
@@ -32,6 +30,7 @@ const producer: Producer = new Kafka({
 }).producer();
 
 let costProducerConnected = false;
+
 
 // --- Security Middleware ---
 // Add helmet for security headers
@@ -253,7 +252,9 @@ app.post("/reapply-costs",
 );
 
 interface KafkaMessageData {
-  id: string;
+  global_id: string;
+  cost: number;
+  cost_unit: number;
   [key: string]: any;
 }
 
@@ -266,12 +267,52 @@ interface KafkaMessageBody {
 app.post("/confirm-costs", 
   strictLimiter,
   body('data').isArray().withMessage('Data must be an array'),
-  body('data.*.id').notEmpty().withMessage('Each element must have an id'),
+  body('data.*.global_id').notEmpty().withMessage('Each element must have a global_id'),
   body('project').optional().trim().notEmpty(),
   handleValidationErrors,
   haltOnTimedout,
   async (req: Request<{}, {}, KafkaMessageBody>, res: Response) => {
     const kafkaMessage = req.body;
+    
+    // CRITICAL: Transform global_id to id for Kafka compatibility
+    if (!kafkaMessage.data) {
+      return res.status(400).json({ status: "error", error: "Missing data array" });
+    }
+    
+    // Transform global_id to id for Kafka message with validation
+    const transformedData = kafkaMessage.data
+      .map((item, index) => {
+        if (!item.global_id) {
+          logger.warn(`Skipping item at index ${index}: global_id is ${item.global_id}`, {
+            itemIndex: index,
+            item: item
+          });
+          return null;
+        }
+        return {
+          id: item.global_id,  // Transform global_id to id for Kafka
+          cost: item.cost,
+          cost_unit: item.cost_unit
+        };
+      })
+      .filter((item): item is CostDataKafka => item !== null);
+    
+    const skippedCount = kafkaMessage.data.length - transformedData.length;
+    if (skippedCount > 0) {
+      logger.warn(`Skipped ${skippedCount} items with invalid global_id out of ${kafkaMessage.data.length} total items`);
+    }
+    
+    if (transformedData.length === 0) {
+      return res.status(400).json({ 
+        status: "error", 
+        error: "No valid cost data: all items missing global_id" 
+      });
+    }
+    
+    const kafkaPayload = {
+      ...kafkaMessage,
+      data: transformedData
+    };
     
     try {
       // Send to Kafka
@@ -280,17 +321,19 @@ app.post("/confirm-costs",
         messages: [
           {
             key: kafkaMessage.project || "unknown",
-            value: JSON.stringify(kafkaMessage),
+            value: JSON.stringify(kafkaPayload),
           },
         ],
       });
       
-      logger.info(`Sent ${kafkaMessage.data.length} cost elements to Kafka for project ${kafkaMessage.project}`);
+      logger.info(`Sent ${transformedData.length} cost elements to Kafka for project ${kafkaMessage.project}${skippedCount > 0 ? ` (skipped ${skippedCount} invalid items)` : ''}`);
+      
       
       res.status(200).json({
         status: "success",
-        message: `Successfully sent ${kafkaMessage.data.length} cost elements`,
-        count: kafkaMessage.data.length
+        message: `Successfully sent ${transformedData.length} cost elements${skippedCount > 0 ? ` (skipped ${skippedCount} invalid items)` : ''}`,
+        count: transformedData.length,
+        ...(skippedCount > 0 && { skipped: skippedCount })
       });
     } catch (error) {
       logger.error("Error sending cost data to Kafka:", error);
@@ -301,6 +344,7 @@ app.post("/confirm-costs",
     }
   }
 );
+
 
 // --- Health Check ---
 app.get("/health", (req: Request, res: Response) => {

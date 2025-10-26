@@ -64,6 +64,7 @@ databases.forEach((dbName) => {
 
     // Create indexes
     db.costData.createIndex({ element_id: 1 });
+    db.costData.createIndex({ global_id: 1 });  // Add new index for global_id
     db.costData.createIndex({ project_id: 1 });
     db.costData.createIndex({ ebkp_code: 1 });
 
@@ -74,6 +75,7 @@ databases.forEach((dbName) => {
     db.costSummaries.createIndex({ total_from_cost_data: 1 });
 
     db.costElements.createIndex({ element_id: 1 });
+    db.costElements.createIndex({ global_id: 1 });  // Add new index for global_id
     db.costElements.createIndex({ ebkp_code: 1 });
     db.costElements.createIndex({ project_id: 1 });
     db.costElements.createIndex({ qto_element_id: 1 });

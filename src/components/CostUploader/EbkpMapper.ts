@@ -311,27 +311,6 @@ export class EbkpMapper {
     return updatedItems;
   }
 
-  /**
-   * Calculate total cost for all items
-   * @deprecated Use recalculateParentTotals and access top-level chf instead.
-   */
-  calculateTotalCost(items: CostItem[]): number {
-    let total = 0;
-
-    items.forEach((item) => {
-      // Add current item's cost if available
-      if (item.chf) {
-        total += item.chf;
-      }
-
-      // Add children's costs recursively
-      if (item.children && item.children.length > 0) {
-        total += this.calculateTotalCost(item.children);
-      }
-    });
-
-    return total;
-  }
 
   /**
    * Recursively recalculates the chf/totalChf for parent items

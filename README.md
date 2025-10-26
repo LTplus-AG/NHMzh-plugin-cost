@@ -1,6 +1,8 @@
 # 💰 NHMzh Plugin-Cost: Kostenberechnung
 
 [![React](https://img.shields.io/badge/React-18.3-61DAFB.svg?style=for-the-badge&logo=react)](https://reactjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-6.2-646CFF.svg?style=for-the-badge&logo=vite)](https://vitejs.dev/)
 [![Node.js](https://img.shields.io/badge/Node.js-18.x-339933.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248.svg?style=for-the-badge&logo=mongodb)](https://www.mongodb.com/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
@@ -20,10 +22,10 @@ Modul zur Kostenberechnung für das Nachhaltigkeitsmonitoring der Stadt Zürich 
 
 ### 🏛️ Architektur und Datenfluss
 
-Das Cost-Plugin ist eine Webanwendung mit einem React-Frontend und einem Node.js-Backend.
+Das Cost-Plugin ist eine Webanwendung mit einem React/TypeScript-Frontend (Vite) und einem Node.js/Express-Backend.
 
-- **Frontend**: Eine in React/TypeScript entwickelte Oberfläche, die es Benutzern ermöglicht, Kostenkennwerte pro Projekt zu verwalten (z.B. durch Excel-Upload) und die berechneten Kosten pro Bauteil einzusehen.
-- **Backend**: Ein Node.js REST API Server, der die Hauptlogik für die Kostenberechnung enthält. Er bietet HTTP-Endpunkte für alle Operationen.
+- **Frontend**: Eine in React/TypeScript entwickelte Oberfläche, die über Vite ausgeliefert wird. Benutzer verwalten Kostenkennwerte pro Projekt (z.B. durch Excel-Upload) und sehen die berechneten Kosten pro Bauteil.
+- **Backend**: Ein Express-Server in `backend/`, implementiert in TypeScript. Er stellt die REST-API für alle Operationen bereit und kommuniziert mit Kafka, um freigegebene Kostendaten an nachgelagerte Systeme zu senden.
 
 **Datenfluss:**
 
@@ -96,7 +98,7 @@ Alle Endpunkte verfügen über:
 
 Die Installation und Ausführung erfolgt im Rahmen der gesamten NHMzh-Umgebung via Docker Compose. Für die lokale Entwicklung:
 
-**Frontend (React):**
+**Frontend (Vite + React/TypeScript):**
 ```bash
 # In das Plugin-Verzeichnis wechseln
 cd plugin-cost
@@ -106,7 +108,7 @@ npm install
 npm run dev
 ```
 
-**Backend (Node.js):**
+**Backend (Express + TypeScript):**
 ```bash
 cd plugin-cost/backend
 # Abhängigkeiten installieren
@@ -114,6 +116,12 @@ npm install
 # Backend-Server starten
 npm run dev
 ```
+
+Das Frontend läuft standardmässig unter `http://localhost:5173`, das Backend unter dem Port, der in `backend/config.ts` konfiguriert ist (Standard: `8004`).
+
+### 🤝 Förderung & Urheberschaft
+
+Dieses Projekt wurde durch die Stadt Zürich finanziert. Der gesamte in diesem Repository enthaltene Quellcode stammt von Louis Trümpler (LTplus AG).
 
 ### 📄 Lizenz
 
