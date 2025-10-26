@@ -14,7 +14,7 @@ This document summarizes the implementation of using `global_id` consistently th
 ### 1. Backend Type Updates (`plugin-cost/backend/types.ts`)
 - Added `global_id?: string` field to `CostData` interface
 - Kept `element_id?: ObjectId` for backward compatibility
-- Updated `CostDataKafka` interface to use `global_id` instead of `id`
+- `CostDataKafka` interface retains `id` field for Kafka consumer compatibility (internal mapping from `global_id`)
 
 ### 2. MongoDB Operations (`plugin-cost/backend/mongodb.ts`)
 - `getCostDataForElement()`: Now searches both `global_id` and `element_id` fields
