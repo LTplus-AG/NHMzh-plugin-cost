@@ -19,7 +19,7 @@ import {
   getProjectsCollection
 } from "./mongodb";
 
-import { ElementsResponse } from "./types";
+import { CostDataKafka, ElementsResponse } from "./types";
 
 dotenv.config();
 
@@ -279,12 +279,35 @@ app.post("/confirm-costs",
       return res.status(400).json({ status: "error", error: "Missing data array" });
     }
     
-    // Transform global_id to id for Kafka message
-    const transformedData = kafkaMessage.data.map(item => ({
-      id: item.global_id,  // Transform global_id to id for Kafka
-      cost: item.cost,
-      cost_unit: item.cost_unit
-    }));
+    // Transform global_id to id for Kafka message with validation
+    const transformedData = kafkaMessage.data
+      .map((item, index) => {
+        if (!item.global_id) {
+          logger.warn(`Skipping item at index ${index}: global_id is ${item.global_id}`, {
+            itemIndex: index,
+            item: item
+          });
+          return null;
+        }
+        return {
+          id: item.global_id,  // Transform global_id to id for Kafka
+          cost: item.cost,
+          cost_unit: item.cost_unit
+        };
+      })
+      .filter((item): item is CostDataKafka => item !== null);
+    
+    const skippedCount = kafkaMessage.data.length - transformedData.length;
+    if (skippedCount > 0) {
+      logger.warn(`Skipped ${skippedCount} items with invalid global_id out of ${kafkaMessage.data.length} total items`);
+    }
+    
+    if (transformedData.length === 0) {
+      return res.status(400).json({ 
+        status: "error", 
+        error: "No valid cost data: all items missing global_id" 
+      });
+    }
     
     const kafkaPayload = {
       ...kafkaMessage,
@@ -303,13 +326,14 @@ app.post("/confirm-costs",
         ],
       });
       
-      logger.info(`Sent ${kafkaMessage.data.length} cost elements to Kafka for project ${kafkaMessage.project}`);
+      logger.info(`Sent ${transformedData.length} cost elements to Kafka for project ${kafkaMessage.project}${skippedCount > 0 ? ` (skipped ${skippedCount} invalid items)` : ''}`);
       
       
       res.status(200).json({
         status: "success",
-        message: `Successfully sent ${kafkaMessage.data.length} cost elements`,
-        count: kafkaMessage.data.length
+        message: `Successfully sent ${transformedData.length} cost elements${skippedCount > 0 ? ` (skipped ${skippedCount} invalid items)` : ''}`,
+        count: transformedData.length,
+        ...(skippedCount > 0 && { skipped: skippedCount })
       });
     } catch (error) {
       logger.error("Error sending cost data to Kafka:", error);
