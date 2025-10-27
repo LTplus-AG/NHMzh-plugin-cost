@@ -42,6 +42,15 @@ export const getElementQuantityValue = (element: MongoElement, selectedQuantityT
  * @returns True if the element has missing quantities for the specified type
  */
 export const hasElementMissingQuantity = (element: MongoElement, selectedQuantityType: string): boolean => {
+  // PRIORITY 1: Check if user edited quantity in QTO (most important!)
+  // If user edited quantity exists with a valid value, element is NOT missing - regardless of type match
+  if (element.quantity && typeof element.quantity === 'object' && element.quantity.value > 0) {
+    // Element has been manually edited - NOT MISSING!
+    // Even if the type doesn't match the selected type, the user has provided a quantity
+    return false;
+  }
+
+  // PRIORITY 2: Check original IFC quantities for the selected type
   switch (selectedQuantityType) {
     case 'area':
       return !element.area || element.area <= 0;

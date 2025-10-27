@@ -28,6 +28,7 @@ import React, { useMemo, useState } from "react";
 import { MongoElement } from "../../types/common.types";
 import { CostEbkpGroup } from "../../types/cost.types";
 import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
+import { hasElementMissingQuantity } from "../../utils/quantityUtils";
 import logger from '../../utils/logger';
 
 interface CostEbkpGroupRowProps {
@@ -145,9 +146,8 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   // Check if any child elements have zero quantities for the selected quantity type
   const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
   const elementsWithZeroQuantity = group.elements.filter(element => {
-    // Elements store quantities directly as properties, not in available_quantities array
-    const quantityValue = getElementQuantityValue(element, selectedQuantityType);
-    return isZeroQuantity(quantityValue);
+    // Use hasElementMissingQuantity which properly checks edited quantities first
+    return hasElementMissingQuantity(element, selectedQuantityType);
   });
 
   const hasZeroQuantity = elementsWithZeroQuantity.length > 0;
