@@ -464,9 +464,9 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                 {/* Quantities info */}
                                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
                                   {/* Show edited quantity prominently if it exists */}
-                                  {element.quantity && typeof element.quantity === 'object' && element.quantity.value > 0 && (
+                                  {element.quantity && typeof element.quantity === 'object' && Number.isFinite(Number(element.quantity.value)) && (
                                     <Chip
-                                      label={`✏️ ${element.quantity.value.toFixed(2)} ${element.quantity.unit || ''}`}
+                                      label={`✏️ ${formatQuantity(Number(element.quantity.value))} ${element.quantity.unit || ''}`}
                                       size="small"
                                       color="success"
                                       variant="filled"
@@ -484,10 +484,10 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                       color: selectedQuantityType === 'area' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
                                       fontWeight: selectedQuantityType === 'area' ? 'bold' : 'normal',
-                                      textDecoration: element.quantity && element.quantity.type === 'area' ? 'line-through' : 'none',
-                                      opacity: element.quantity && element.quantity.type === 'area' ? 0.5 : 1
+                                      textDecoration: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'area' ? 'line-through' : 'none',
+                                      opacity: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'area' ? 0.5 : 1
                                     }}>
-                                      A: {element.area?.toFixed(2) || '0'} m²
+                                      A: {formatQuantity(element.area)} m²
                                     </Typography>
                                   )}
                                   {element.length !== undefined && (
@@ -495,10 +495,10 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                       color: selectedQuantityType === 'length' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
                                       fontWeight: selectedQuantityType === 'length' ? 'bold' : 'normal',
-                                      textDecoration: element.quantity && element.quantity.type === 'length' ? 'line-through' : 'none',
-                                      opacity: element.quantity && element.quantity.type === 'length' ? 0.5 : 1
+                                      textDecoration: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'length' ? 'line-through' : 'none',
+                                      opacity: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'length' ? 0.5 : 1
                                     }}>
-                                      L: {element.length?.toFixed(2) || '0'} m
+                                      L: {formatQuantity(element.length)} m
                                     </Typography>
                                   )}
                                   {element.volume !== undefined && (
@@ -506,10 +506,10 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                       color: selectedQuantityType === 'volume' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
                                       fontWeight: selectedQuantityType === 'volume' ? 'bold' : 'normal',
-                                      textDecoration: element.quantity && element.quantity.type === 'volume' ? 'line-through' : 'none',
-                                      opacity: element.quantity && element.quantity.type === 'volume' ? 0.5 : 1
+                                      textDecoration: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'volume' ? 'line-through' : 'none',
+                                      opacity: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'volume' ? 0.5 : 1
                                     }}>
-                                      V: {element.volume?.toFixed(3) || '0'} m³
+                                      V: {formatQuantity(element.volume)} m³
                                     </Typography>
                                   )}
                                 </Box>
