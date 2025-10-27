@@ -13,7 +13,7 @@ import {
 import React from "react";
 import { HierarchicalCostEbkpGroup } from "../../types/cost.types";
 import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
-import { getElementQuantityValue, hasElementMissingQuantity } from "../../utils/quantityUtils";
+import { hasElementMissingQuantity } from "../../utils/quantityUtils";
 import CostEbkpGroupRow from "./CostEbkpGroupRow";
 
 interface MainCostEbkpGroupRowProps {

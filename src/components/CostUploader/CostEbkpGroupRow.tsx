@@ -157,13 +157,13 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   const processedElements = useMemo(() => {
     // Filter elements if showing only failing ones
     const filteredElements = showOnlyFailing
-      ? group.elements.filter(element => isZeroQuantity(getElementQuantityValue(element, selectedQuantityType)))
+      ? group.elements.filter(element => hasElementMissingQuantity(element, selectedQuantityType))
       : [...group.elements];
 
     // Sort elements to show those with missing quantities first
     const sortedElements = filteredElements.sort((a, b) => {
-      const aHasMissingQuantity = isZeroQuantity(getElementQuantityValue(a, selectedQuantityType));
-      const bHasMissingQuantity = isZeroQuantity(getElementQuantityValue(b, selectedQuantityType));
+      const aHasMissingQuantity = hasElementMissingQuantity(a, selectedQuantityType);
+      const bHasMissingQuantity = hasElementMissingQuantity(b, selectedQuantityType);
 
       // Elements with missing quantities come first
       if (aHasMissingQuantity && !bHasMissingQuantity) return -1;
@@ -578,8 +578,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                 // Count remaining elements with missing quantities
                                 const remainingElements = group.elements.slice(5);
                                 const remainingWithMissingQuantities = remainingElements.filter(element => {
-                                  const quantityValue = getElementQuantityValue(element, selectedQuantityType);
-                                  return isZeroQuantity(quantityValue);
+                                  return hasElementMissingQuantity(element, selectedQuantityType);
                                 }).length;
 
                                 return remainingWithMissingQuantities > 0 ? (
