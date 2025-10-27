@@ -7,6 +7,17 @@ import { MongoElement } from '../types/common.types';
  * @returns The quantity value for the specified type
  */
 export const getElementQuantityValue = (element: MongoElement, selectedQuantityType: string): number => {
+  // PRIORITY 1: Check if user edited quantity in QTO (most important!)
+  if (element.quantity && typeof element.quantity === 'object' && element.quantity.value > 0) {
+    // Return the user-edited value if type matches
+    if (element.quantity.type === selectedQuantityType) {
+      return element.quantity.value;
+    }
+    // If different type, return 0 to indicate no quantity for this type
+    return 0;
+  }
+
+  // PRIORITY 2: Fallback to original IFC quantities
   switch (selectedQuantityType) {
     case 'area':
       return element.area || 0;
@@ -96,10 +107,24 @@ export const quantityTypeCalculationLabel = (type: string): string => {
 export const getAvailableQuantities = (el: MongoElement) => {
   const quantities = [];
 
+  // PRIORITY 1: Check if user edited quantity in QTO (most important!)
+  if (el.quantity && typeof el.quantity === 'object' && el.quantity.value > 0) {
+    return [{
+      value: el.quantity.value,
+      type: el.quantity.type || 'area',
+      unit: el.quantity.unit || 'm²',
+      label: el.quantity.type === 'area' ? 'Area' : 
+             el.quantity.type === 'volume' ? 'Volume' :
+             el.quantity.type === 'length' ? 'Length' : 'Count'
+    }];
+  }
+
+  // PRIORITY 2: Check if available_quantities array exists
   if (el.available_quantities && el.available_quantities.length > 0) {
     return el.available_quantities;
   }
 
+  // PRIORITY 3: Fallback to original IFC quantities (only if no user edit)
   const elAny = el as MongoElement & { area?: number; length?: number; volume?: number };
 
   if (elAny.area && elAny.area > 0) {
