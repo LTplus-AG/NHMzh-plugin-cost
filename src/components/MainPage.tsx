@@ -301,8 +301,6 @@ const MainPage = () => {
         const elements = Array.isArray(data) ? data : data.elements || [];
         const metadata = data.modelMetadata || null;
 
-
-
         if (elements && elements.length > 0) {
           setCurrentElements(elements);
           if (metadata && metadata.filename) {

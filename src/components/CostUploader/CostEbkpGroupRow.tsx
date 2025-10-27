@@ -27,8 +27,9 @@ import {
 import React, { useMemo, useState } from "react";
 import { MongoElement } from "../../types/common.types";
 import { CostEbkpGroup } from "../../types/cost.types";
-import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
 import logger from '../../utils/logger';
+import { hasElementMissingQuantity } from "../../utils/quantityUtils";
+import { getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 
 interface CostEbkpGroupRowProps {
   group: CostEbkpGroup;
@@ -39,32 +40,6 @@ interface CostEbkpGroupRowProps {
   onQuantityTypeChange?: (code: string, quantityType: string) => void;
   isSubGroup?: boolean;
 }
-
-// Helper function to get element quantity value (extracted outside component)
-const getElementQuantityValue = (element: MongoElement, selectedQuantityType: string) => {
-  // PRIORITY 1: Check if user edited quantity in QTO (most important!)
-  if (element.quantity && typeof element.quantity === 'object' && element.quantity.value > 0) {
-    // Return the user-edited value if type matches
-    if (element.quantity.type === selectedQuantityType) {
-      return element.quantity.value;
-    }
-    // If different type, fall through to Priority 2 (original IFC quantities)
-  }
-
-  // PRIORITY 2: Fallback to original IFC quantities
-  switch (selectedQuantityType) {
-    case 'area':
-      return element.area;
-    case 'volume':
-      return element.volume;
-    case 'length':
-      return element.length;
-    case 'count':
-      return 1;
-    default:
-      return element.area;
-  }
-};
 
 const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   group,
@@ -145,9 +120,8 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   // Check if any child elements have zero quantities for the selected quantity type
   const selectedQuantityType = group.selectedQuantityType || group.availableQuantities[0]?.type;
   const elementsWithZeroQuantity = group.elements.filter(element => {
-    // Elements store quantities directly as properties, not in available_quantities array
-    const quantityValue = getElementQuantityValue(element, selectedQuantityType);
-    return isZeroQuantity(quantityValue);
+    // Use hasElementMissingQuantity which properly checks edited quantities first
+    return hasElementMissingQuantity(element, selectedQuantityType);
   });
 
   const hasZeroQuantity = elementsWithZeroQuantity.length > 0;
@@ -157,13 +131,13 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   const processedElements = useMemo(() => {
     // Filter elements if showing only failing ones
     const filteredElements = showOnlyFailing
-      ? group.elements.filter(element => isZeroQuantity(getElementQuantityValue(element, selectedQuantityType)))
+      ? group.elements.filter(element => hasElementMissingQuantity(element, selectedQuantityType))
       : [...group.elements];
 
     // Sort elements to show those with missing quantities first
     const sortedElements = filteredElements.sort((a, b) => {
-      const aHasMissingQuantity = isZeroQuantity(getElementQuantityValue(a, selectedQuantityType));
-      const bHasMissingQuantity = isZeroQuantity(getElementQuantityValue(b, selectedQuantityType));
+      const aHasMissingQuantity = hasElementMissingQuantity(a, selectedQuantityType);
+      const bHasMissingQuantity = hasElementMissingQuantity(b, selectedQuantityType);
 
       // Elements with missing quantities come first
       if (aHasMissingQuantity && !bHasMissingQuantity) return -1;
@@ -344,8 +318,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                   <TableBody>
                     {processedElements.map((element: MongoElement) => {
                       // For individual elements, check if they have zero quantity for the selected type
-                      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
-                      const elementHasZeroQuantity = isZeroQuantity(quantityValue);
+                      const elementHasZeroQuantity = hasElementMissingQuantity(element, selectedQuantityType);
 
                       return (
                         <Tooltip
@@ -578,8 +551,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                 // Count remaining elements with missing quantities
                                 const remainingElements = group.elements.slice(5);
                                 const remainingWithMissingQuantities = remainingElements.filter(element => {
-                                  const quantityValue = getElementQuantityValue(element, selectedQuantityType);
-                                  return isZeroQuantity(quantityValue);
+                                  return hasElementMissingQuantity(element, selectedQuantityType);
                                 }).length;
 
                                 return remainingWithMissingQuantities > 0 ? (

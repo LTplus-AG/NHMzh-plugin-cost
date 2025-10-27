@@ -12,8 +12,8 @@ import {
 } from "@mui/material";
 import React from "react";
 import { HierarchicalCostEbkpGroup } from "../../types/cost.types";
-import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
-import { getElementQuantityValue } from "../../utils/quantityUtils";
+import { getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
+import { hasElementMissingQuantity } from "../../utils/quantityUtils";
 import CostEbkpGroupRow from "./CostEbkpGroupRow";
 
 interface MainCostEbkpGroupRowProps {
@@ -57,8 +57,7 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
   const hasZeroQuantity = group.subGroups.some(subGroup => {
     const selectedQuantityType = subGroup.selectedQuantityType || subGroup.availableQuantities[0]?.type;
     return subGroup.elements.some(element => {
-      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
-      return isZeroQuantity(quantityValue);
+      return hasElementMissingQuantity(element, selectedQuantityType);
     });
   });
 
@@ -67,8 +66,7 @@ const MainCostEbkpGroupRow: React.FC<MainCostEbkpGroupRowProps> = ({
     const selectedQuantityType = subGroup.selectedQuantityType || subGroup.availableQuantities[0]?.type;
     // Count elements in this subgroup that have zero quantities for the selected type
     const elementsWithZeroQuantity = subGroup.elements.filter(element => {
-      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
-      return isZeroQuantity(quantityValue);
+      return hasElementMissingQuantity(element, selectedQuantityType);
     });
     return total + elementsWithZeroQuantity.length;
   }, 0);
