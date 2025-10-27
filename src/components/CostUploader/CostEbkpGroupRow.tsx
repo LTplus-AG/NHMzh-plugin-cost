@@ -27,9 +27,9 @@ import {
 import React, { useMemo, useState } from "react";
 import { MongoElement } from "../../types/common.types";
 import { CostEbkpGroup } from "../../types/cost.types";
-import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
-import { hasElementMissingQuantity } from "../../utils/quantityUtils";
 import logger from '../../utils/logger';
+import { hasElementMissingQuantity } from "../../utils/quantityUtils";
+import { getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 
 interface CostEbkpGroupRowProps {
   group: CostEbkpGroup;
@@ -40,32 +40,6 @@ interface CostEbkpGroupRowProps {
   onQuantityTypeChange?: (code: string, quantityType: string) => void;
   isSubGroup?: boolean;
 }
-
-// Helper function to get element quantity value (extracted outside component)
-const getElementQuantityValue = (element: MongoElement, selectedQuantityType: string) => {
-  // PRIORITY 1: Check if user edited quantity in QTO (most important!)
-  if (element.quantity && typeof element.quantity === 'object' && element.quantity.value > 0) {
-    // Return the user-edited value if type matches
-    if (element.quantity.type === selectedQuantityType) {
-      return element.quantity.value;
-    }
-    // If different type, fall through to Priority 2 (original IFC quantities)
-  }
-
-  // PRIORITY 2: Fallback to original IFC quantities
-  switch (selectedQuantityType) {
-    case 'area':
-      return element.area;
-    case 'volume':
-      return element.volume;
-    case 'length':
-      return element.length;
-    case 'count':
-      return 1;
-    default:
-      return element.area;
-  }
-};
 
 const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
   group,
@@ -344,8 +318,7 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                   <TableBody>
                     {processedElements.map((element: MongoElement) => {
                       // For individual elements, check if they have zero quantity for the selected type
-                      const quantityValue = getElementQuantityValue(element, selectedQuantityType);
-                      const elementHasZeroQuantity = isZeroQuantity(quantityValue);
+                      const elementHasZeroQuantity = hasElementMissingQuantity(element, selectedQuantityType);
 
                       return (
                         <Tooltip

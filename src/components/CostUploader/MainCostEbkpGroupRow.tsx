@@ -12,7 +12,7 @@ import {
 } from "@mui/material";
 import React from "react";
 import { HierarchicalCostEbkpGroup } from "../../types/cost.types";
-import { getZeroQuantityStyles, isZeroQuantity } from "../../utils/zeroQuantityHighlight";
+import { getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 import { hasElementMissingQuantity } from "../../utils/quantityUtils";
 import CostEbkpGroupRow from "./CostEbkpGroupRow";
 
