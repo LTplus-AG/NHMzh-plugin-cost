@@ -13,8 +13,7 @@ export const getElementQuantityValue = (element: MongoElement, selectedQuantityT
     if (element.quantity.type === selectedQuantityType) {
       return element.quantity.value;
     }
-    // If different type, return 0 to indicate no quantity for this type
-    return 0;
+    // If different type, fall through to Priority 2 (original IFC quantities)
   }
 
   // PRIORITY 2: Fallback to original IFC quantities
@@ -100,6 +99,21 @@ export const quantityTypeCalculationLabel = (type: string): string => {
 };
 
 /**
+ * Gets the default unit for a quantity type
+ * @param type - The quantity type ('area', 'volume', 'length', 'count')
+ * @returns The default unit for the quantity type
+ */
+const getDefaultUnit = (type: string): string => {
+  switch (type) {
+    case 'area': return 'm²';
+    case 'volume': return 'm³';
+    case 'length': return 'm';
+    case 'count': return 'Stk';
+    default: return 'm²';
+  }
+};
+
+/**
  * Gets available quantities for a MongoElement
  * @param el - The MongoElement to get available quantities for
  * @returns Array of available quantities with value, type, unit, and label
@@ -109,10 +123,11 @@ export const getAvailableQuantities = (el: MongoElement) => {
 
   // PRIORITY 1: Check if user edited quantity in QTO (most important!)
   if (el.quantity && typeof el.quantity === 'object' && el.quantity.value > 0) {
+    const quantityType = el.quantity.type || 'area';
     return [{
       value: el.quantity.value,
-      type: el.quantity.type || 'area',
-      unit: el.quantity.unit || 'm²',
+      type: quantityType,
+      unit: el.quantity.unit || getDefaultUnit(quantityType),
       label: el.quantity.type === 'area' ? 'Area' : 
              el.quantity.type === 'volume' ? 'Volume' :
              el.quantity.type === 'length' ? 'Length' : 'Count'
