@@ -42,6 +42,16 @@ interface CostEbkpGroupRowProps {
 
 // Helper function to get element quantity value (extracted outside component)
 const getElementQuantityValue = (element: MongoElement, selectedQuantityType: string) => {
+  // PRIORITY 1: Check if user edited quantity in QTO (most important!)
+  if (element.quantity && typeof element.quantity === 'object' && element.quantity.value > 0) {
+    // Return the user-edited value if type matches
+    if (element.quantity.type === selectedQuantityType) {
+      return element.quantity.value;
+    }
+    // If different type, fall through to Priority 2 (original IFC quantities)
+  }
+
+  // PRIORITY 2: Fallback to original IFC quantities
   switch (selectedQuantityType) {
     case 'area':
       return element.area;
@@ -452,32 +462,54 @@ const CostEbkpGroupRow: React.FC<CostEbkpGroupRowProps> = ({
                                 )}
 
                                 {/* Quantities info */}
-                                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                                  {/* Show edited quantity prominently if it exists */}
+                                  {element.quantity && typeof element.quantity === 'object' && Number.isFinite(Number(element.quantity.value)) && (
+                                    <Chip
+                                      label={`✏️ ${formatQuantity(Number(element.quantity.value))} ${element.quantity.unit || ''}`}
+                                      size="small"
+                                      color="success"
+                                      variant="filled"
+                                      sx={{
+                                        fontSize: '0.7rem',
+                                        fontWeight: 'bold',
+                                        height: 20
+                                      }}
+                                    />
+                                  )}
+                                  
+                                  {/* Original IFC quantities */}
                                   {element.area !== undefined && (
                                     <Typography variant="caption" sx={{
                                       color: selectedQuantityType === 'area' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
-                                      fontWeight: selectedQuantityType === 'area' ? 'bold' : 'normal'
+                                      fontWeight: selectedQuantityType === 'area' ? 'bold' : 'normal',
+                                      textDecoration: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'area' ? 'line-through' : 'none',
+                                      opacity: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'area' ? 0.5 : 1
                                     }}>
-                                      A: {element.area?.toFixed(2) || '0'} m²
+                                      A: {formatQuantity(element.area)} m²
                                     </Typography>
                                   )}
                                   {element.length !== undefined && (
                                     <Typography variant="caption" sx={{
                                       color: selectedQuantityType === 'length' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
-                                      fontWeight: selectedQuantityType === 'length' ? 'bold' : 'normal'
+                                      fontWeight: selectedQuantityType === 'length' ? 'bold' : 'normal',
+                                      textDecoration: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'length' ? 'line-through' : 'none',
+                                      opacity: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'length' ? 0.5 : 1
                                     }}>
-                                      L: {element.length?.toFixed(2) || '0'} m
+                                      L: {formatQuantity(element.length)} m
                                     </Typography>
                                   )}
                                   {element.volume !== undefined && (
                                     <Typography variant="caption" sx={{
                                       color: selectedQuantityType === 'volume' && elementHasZeroQuantity ? 'warning.main' : 'text.secondary',
                                       fontSize: '0.65rem',
-                                      fontWeight: selectedQuantityType === 'volume' ? 'bold' : 'normal'
+                                      fontWeight: selectedQuantityType === 'volume' ? 'bold' : 'normal',
+                                      textDecoration: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'volume' ? 'line-through' : 'none',
+                                      opacity: element.quantity && Number(element.quantity.value) > 0 && element.quantity.type === 'volume' ? 0.5 : 1
                                     }}>
-                                      V: {element.volume?.toFixed(3) || '0'} m³
+                                      V: {formatQuantity(element.volume)} m³
                                     </Typography>
                                   )}
                                 </Box>
