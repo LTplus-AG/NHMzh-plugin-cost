@@ -309,7 +309,7 @@ const MainPage = () => {
             setModelMetadata({
               filename: metadata.filename,
               element_count: elements.length,
-              upload_timestamp: metadata.timestamp,
+              upload_timestamp: metadata.upload_timestamp,
             });
           } else {
             setModelMetadata({
