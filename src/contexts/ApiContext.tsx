@@ -203,7 +203,7 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
 
   // Get backend URL from environment or use default
   const backendUrl =
-    import.meta.env.VITE_COST_BACKEND_URL || "http://localhost:8001";
+    import.meta.env.VITE_COST_API_URL || "http://localhost:8001";
 
   // Load available EBKP codes on mount
   useEffect(() => {

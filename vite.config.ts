@@ -4,11 +4,13 @@ import federation from "@originjs/vite-plugin-federation";
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  // Load environment variables
-  const env = loadEnv(mode, process.cwd(), "");
+  // Load environment variables from the plugin-cost directory
+  const env = loadEnv(mode, process.cwd(), "VITE_");
 
   console.log(`Running in ${mode} mode`);
-  console.log(`API URL: ${env.VITE_API_URL}`);
+  console.log(`COST API URL: ${env.VITE_COST_API_URL}`);
+  console.log(`QTO API URL: ${env.VITE_QTO_API_URL}`);
+  console.log(`WebSocket URL: ${env.VITE_WEBSOCKET_URL}`);
 
   return {
     plugins: [
@@ -28,7 +30,9 @@ export default defineConfig(({ mode }) => {
     ],
     define: {
       // Expose environment variables to the client
-      "import.meta.env.VITE_API_URL": JSON.stringify(env.VITE_API_URL),
+      "import.meta.env.VITE_COST_API_URL": JSON.stringify(env.VITE_COST_API_URL),
+      "import.meta.env.VITE_QTO_API_URL": JSON.stringify(env.VITE_QTO_API_URL),
+      "import.meta.env.VITE_WEBSOCKET_URL": JSON.stringify(env.VITE_WEBSOCKET_URL),
     },
     build: {
       target: "esnext",
