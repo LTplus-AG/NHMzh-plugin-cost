@@ -36,7 +36,7 @@ export interface Project {
   metadata?: Record<string, unknown>;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8001";
+const API_BASE_URL = import.meta.env.VITE_COST_API_URL || "http://localhost:8001";
 
 async function getProjects(): Promise<Project[]> {
   const response = await fetch(`${API_BASE_URL}/projects`);
