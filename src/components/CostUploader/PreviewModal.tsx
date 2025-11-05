@@ -322,7 +322,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                     <TableRow>
                       <TableCell>Status</TableCell>
                       <TableCell>eBKP</TableCell>
-                      <TableCell>Bezeichnung</TableCell>
                       <TableCell align="right">Menge</TableCell>
                       <TableCell align="right">Einheit</TableCell>
                       <TableCell align="right">Kennwert (CHF)</TableCell>
@@ -359,11 +358,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
                               variant="body2"
                               fontWeight={hasCost ? "normal" : "bold"}
                             >
-                              {stat.code}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2">
                               {stat.code}
                             </Typography>
                           </TableCell>
