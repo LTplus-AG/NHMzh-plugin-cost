@@ -59,7 +59,7 @@ export interface EnhancedCostItem extends CostItem {
 interface PreviewModalProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (matches: EnhancedCostItem[]) => void;
+  onConfirm: () => void;
   metaFile: MetaFile | null;
   calculatedTotalCost: number;
   ebkpStats: EbkpStat[];
@@ -146,8 +146,8 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
     onClose();
 
     // Call onConfirm to trigger cost submission
-    // Parent (MainPage) builds the actual payload from ebkpStats
-    onConfirm([]);
+    // Parent (MainPage) builds the payload from ebkpStats directly
+    onConfirm();
   };
 
   return (
