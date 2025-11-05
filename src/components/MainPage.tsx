@@ -974,6 +974,8 @@ const MainPage = () => {
         onConfirm={handleConfirmCosts}
         metaFile={metaFileForPreview}
         calculatedTotalCost={totalCost}
+        ebkpStats={ebkpStats}
+        kennwerte={kennwerte}
       />
 
       {/* Excel Import Dialog */}

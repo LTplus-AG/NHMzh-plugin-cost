@@ -224,7 +224,7 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
     // Poll for project updates every 30 seconds
     const interval = setInterval(loadEbkpCodes, 30000);
     return () => clearInterval(interval);
-  }, [backendUrl]);
+  }, []);
 
   // Send cost update to backend
   const sendCostUpdate = async (
@@ -324,7 +324,7 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
     }
 
     return {
-      global_id: el.global_id || el._id || "",  // Always use global_id
+      id: el.global_id || el._id || "",  // Always use global_id
       ebkpCode: ebkpCode,
       quantity: typeof el.quantity === 'object' ? el.quantity : undefined,
       area: area,
