@@ -203,7 +203,7 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
 
   // Get backend URL from environment or use default
   const backendUrl =
-    import.meta.env.VITE_COST_BACKEND_URL || "http://localhost:8001";
+    import.meta.env.VITE_COST_API_URL || "http://localhost:8001";
 
   // Load available EBKP codes on mount
   useEffect(() => {
@@ -224,7 +224,7 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
     // Poll for project updates every 30 seconds
     const interval = setInterval(loadEbkpCodes, 30000);
     return () => clearInterval(interval);
-  }, [backendUrl]);
+  }, []);
 
   // Send cost update to backend
   const sendCostUpdate = async (
@@ -324,7 +324,7 @@ export const ApiProvider: React.FC<ApiProviderProps> = ({ children }) => {
     }
 
     return {
-      global_id: el.global_id || el._id || "",  // Always use global_id
+      id: el.global_id || el._id || "",  // Always use global_id
       ebkpCode: ebkpCode,
       quantity: typeof el.quantity === 'object' ? el.quantity : undefined,
       area: area,
