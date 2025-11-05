@@ -76,7 +76,6 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
   open,
   onClose,
   onConfirm,
-  metaFile,
   calculatedTotalCost,
   ebkpStats,
   kennwerte,
@@ -141,50 +140,14 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
     return sortedGroups;
   }, [showOnlyMissing, sortedGroups, kennwerte]);
 
-  // Simplified handleConfirm - create enhanced data from ebkpStats
+  // Simplified handleConfirm - just close and notify parent
   const handleConfirm = () => {
-    // Create enhanced data from ebkpStats with costs
-    const enhancedData: EnhancedCostItem[] = ebkpStats
-      .filter((stat) => kennwerte[stat.code] && kennwerte[stat.code] > 0)
-      .map((stat) => {
-        const kennwert = kennwerte[stat.code] || 0;
-        const totalCost = kennwert * stat.quantity;
-        const elementCount = stat.elements?.length || 0;
-
-        return {
-          id: stat.code,
-          ebkp: stat.code,
-          ebkph: stat.code,
-          ebkph1: stat.code.match(/^([A-Z]\d+)/)?.[1] || "",
-          ebkph2: stat.code.match(/^[A-Z]\d+\.(\d+)/)?.[1] || "",
-          ebkph3: "",
-          category: "",
-          level: "",
-          is_structural: false,
-          fire_rating: "",
-          cost_unit: kennwert,
-          area: stat.quantity,
-          quantity: stat.quantity,
-          cost: totalCost,
-          element_count: elementCount,
-          fileID: metaFile?.file.name || "unknown",
-          fromKafka: true,
-          kafkaSource: "BIM",
-          kafkaTimestamp: new Date().toISOString(),
-          areaSource: "BIM",
-          einheit: stat.unit || "m²",
-          menge: stat.quantity,
-          totalChf: totalCost,
-          kennwert: kennwert,
-          bezeichnung: "",
-        } as EnhancedCostItem;
-      });
-
     // Close the modal
     onClose();
 
-    // Call onConfirm with the enhanced data
-    onConfirm(enhancedData);
+    // Call onConfirm to trigger cost submission
+    // Parent (MainPage) builds the actual payload from ebkpStats
+    onConfirm([]);
   };
 
   return (
