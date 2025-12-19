@@ -60,10 +60,10 @@ interface PreviewModalProps {
   open: boolean;
   onClose: () => void;
   onConfirm: () => void;
-  metaFile: MetaFile | null;
+  metaFile?: MetaFile | null;
   calculatedTotalCost: number;
-  ebkpStats: EbkpStat[];
-  kennwerte: Record<string, number>;
+  ebkpStats?: EbkpStat[];
+  kennwerte?: Record<string, number>;
 }
 
 // Helper function to get main group from eBKP code (C, E, F, G, etc.)
@@ -77,8 +77,8 @@ const PreviewModal: React.FC<PreviewModalProps> = ({
   onClose,
   onConfirm,
   calculatedTotalCost,
-  ebkpStats,
-  kennwerte,
+  ebkpStats = [],
+  kennwerte = {},
 }) => {
   const [activeTab, setActiveTab] = useState(0);
   const [showAllMissing, setShowAllMissing] = useState(false);

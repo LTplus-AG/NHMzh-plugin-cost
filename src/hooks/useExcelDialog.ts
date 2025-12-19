@@ -57,12 +57,12 @@ export const useExcelDialog = () => {
   useEffect(() => {
     try {
       // Don't save the filename as it should be date-based
-      const configToSave = Object.keys(exportConfig).reduce((acc, key) => {
+      const configToSave: Partial<ExcelExportConfig> = {};
+      (Object.keys(exportConfig) as Array<keyof ExcelExportConfig>).forEach(key => {
         if (key !== 'fileName') {
-          acc[key] = exportConfig[key as keyof typeof exportConfig];
+          configToSave[key] = exportConfig[key];
         }
-        return acc;
-      }, {} as typeof exportConfig);
+      });
       localStorage.setItem(EXCEL_CONFIG_KEY, JSON.stringify(configToSave));
     } catch (error) {
       console.warn('Failed to save Excel config to localStorage:', error);

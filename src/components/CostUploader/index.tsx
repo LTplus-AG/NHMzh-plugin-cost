@@ -11,7 +11,7 @@ import { parseExcelFile } from "./utils";
 import FileDropzone from "./FileDropzone";
 import FileInfo from "./FileInfo";
 import HierarchicalTable from "./HierarchicalTable";
-import PreviewModal, { EnhancedCostItem } from "./PreviewModal";
+import PreviewModal from "./PreviewModal";
 import BimMapper from "./BimMapper";
 import { MongoElement } from "../../types/common.types";
 import { useCostCalculation } from "../../hooks/useCostCalculation";
@@ -109,7 +109,7 @@ const CostUploader = ({
     }
   };
 
-  const handleConfirmPreview = async (enhancedData: EnhancedCostItem[]) => {
+  const handleConfirmPreview = async () => {
     if (!metaFile) {
       logger.error("Cannot confirm preview without metaFile.");
       handleClosePreviewInternal();
@@ -117,6 +117,10 @@ const CostUploader = ({
     }
     setIsLoading(true);
     setMappingMessage("Kostendaten werden gespeichert...");
+    
+    // Use bimElements from props as the source of QTO element data
+    const enhancedData = bimElements || [];
+    
     try {
       logger.info(
         `Sending ${enhancedData.length} matched QTO elements to update costElements (Excel data already saved in costData)`
@@ -140,13 +144,16 @@ const CostUploader = ({
       logger.info(
         `Including ${flattenedExcelItems.length} Excel items for reference (already saved in costData)`
       );
+      // Map MongoElement data to the cost API format
+      const costData = enhancedData.map(item => ({
+        id: item.global_id || item._id,
+        cost: 0, // Cost is calculated elsewhere based on kennwerte
+        ebkp_code: item.classification?.id || ''
+      })).filter(item => item.id && item.ebkp_code);
+      
       const response = await costApi.confirmCosts({
         project: projectName,
-        data: enhancedData.map(item => ({
-          id: item.id,
-          cost: Number(item.totalCost) || 0,
-          ebkp_code: item.ebkp
-        }))
+        data: costData
       });
 
       if (response.success) {

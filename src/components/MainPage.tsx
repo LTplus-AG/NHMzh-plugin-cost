@@ -680,8 +680,14 @@ const MainPage = () => {
 
 
 
+  // Calculate total cost using selected quantity from availableQuantities (consistent with table display)
   const totalCost = ebkpStats.reduce(
-    (sum, s) => sum + (kennwerte[s.code] || 0) * s.quantity,
+    (sum, s) => {
+      const selectedType = s.selectedQuantityType || s.availableQuantities?.[0]?.type;
+      const selectedQty = s.availableQuantities?.find(q => q.type === selectedType);
+      const qtyValue = selectedQty?.value || 0;
+      return sum + (kennwerte[s.code] || 0) * qtyValue;
+    },
     0
   );
 
