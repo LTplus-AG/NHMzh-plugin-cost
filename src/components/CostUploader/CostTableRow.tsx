@@ -112,7 +112,7 @@ const CostTableRow = ({
     if (qtoInTree !== hasQtoInTreeState) {
       setHasQtoInTreeState(qtoInTree);
     }
-  }, [item, hasQtoState, hasQtoInTreeState, qtoInTree]);
+  }, [item, hasQtoState, hasQtoInTreeState]);
 
   // Use state values for rendering
   const hasQtoInTree = hasQtoInTreeState;
