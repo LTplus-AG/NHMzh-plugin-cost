@@ -62,6 +62,11 @@ export const useEbkpGroups = (
       // Check if this is an EBKP code
       const mainGroup = getMainGroupFromEbkpCode(group.code);
 
+      // Get the selected quantity value from availableQuantities (same as child components use)
+      const selectedType = group.selectedQuantityType || group.availableQuantities[0]?.type;
+      const selectedQty = group.availableQuantities.find(q => q.type === selectedType);
+      const qtyValue = selectedQty?.value || 0;
+
       if (mainGroup) {
         // It's an EBKP code - add to hierarchical structure
         if (!hierarchicalMap.has(mainGroup)) {
@@ -78,8 +83,8 @@ export const useEbkpGroups = (
         const hierarchicalGroup = hierarchicalMap.get(mainGroup)!;
         hierarchicalGroup.subGroups.push(group);
         hierarchicalGroup.totalElements += group.elements.length;
-        hierarchicalGroup.totalQuantity += group.totalQuantity;
-        hierarchicalGroup.totalCost += group.totalQuantity * (group.kennwert || 0);
+        hierarchicalGroup.totalQuantity += qtyValue;
+        hierarchicalGroup.totalCost += qtyValue * (group.kennwert || 0);
       } else {
         // Not an EBKP code - add to "Other" group
         if (!hierarchicalMap.has("_OTHER_")) {
@@ -96,8 +101,8 @@ export const useEbkpGroups = (
         const otherGroup = hierarchicalMap.get("_OTHER_")!;
         otherGroup.subGroups.push(group);
         otherGroup.totalElements += group.elements.length;
-        otherGroup.totalQuantity += group.totalQuantity;
-        otherGroup.totalCost += group.totalQuantity * (group.kennwert || 0);
+        otherGroup.totalQuantity += qtyValue;
+        otherGroup.totalCost += qtyValue * (group.kennwert || 0);
       }
     });
 
