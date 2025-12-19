@@ -31,6 +31,9 @@ const producer: Producer = new Kafka({
 
 let costProducerConnected = false;
 
+// --- Trust Proxy (required for correct client IP behind Traefik/nginx) ---
+// This ensures rate limiting uses the real client IP from X-Forwarded-For header
+app.set('trust proxy', 1);
 
 // --- Security Middleware ---
 // Add helmet for security headers
@@ -63,10 +66,11 @@ app.use(cors({
 }));
 
 // --- Rate Limiting ---
-// Default rate limiter - 100 requests per 15 minutes per IP
+// Default rate limiter - 300 requests per 15 minutes per IP (increased for production)
+// A single page load can make 5+ API calls, so 100 was too restrictive
 const defaultLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
+  max: 300,
   message: "Too many requests from this IP, please try again later.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -74,10 +78,10 @@ const defaultLimiter = rateLimit({
   skip: (req) => req.path === '/health',
 });
 
-// Strict rate limiter for write operations - 20 requests per 15 minutes per IP
+// Strict rate limiter for write operations - 50 requests per 15 minutes per IP
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20,
+  max: 50,
   message: "Too many write requests from this IP, please try again later.",
   standardHeaders: true,
   legacyHeaders: false,
